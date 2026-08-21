@@ -4,6 +4,54 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const installPlayer = require("../src/preload/install-player");
 
+test("installs Web presence listeners without interrupting the native player bridge", (t) => {
+  const eventNames = [];
+  const bridge = {
+    on() {},
+    status: async () => ({ backend: "mpv", startFullscreen: true }),
+    openExternal: async () => true,
+  };
+  global.location = new URL("https://media.example/jellyfin/web/");
+  global.window = { jellyfinDesktop: bridge };
+  global.document = {
+    title: "Jellyfin",
+    addEventListener(name, callback, capture) {
+      assert.equal(typeof callback, "function");
+      assert.equal(capture, true);
+      eventNames.push(name);
+    },
+  };
+  global.HTMLMediaElement = class HTMLMediaElement {};
+  global.HTMLAudioElement = class HTMLAudioElement extends global.HTMLMediaElement {};
+  t.after(() => {
+    delete global.HTMLAudioElement;
+    delete global.HTMLMediaElement;
+    delete global.document;
+    delete global.location;
+    delete global.window;
+  });
+
+  const result = installPlayer({
+    serverUrl: "https://media.example/jellyfin",
+    backend: "mpv",
+    appName: "Noktus",
+    appVersion: "test",
+    deviceName: "contract-test",
+  });
+
+  assert.equal(result.installed, true);
+  assert.equal(typeof global.window.jellyfinDcMpvPlayer, "function");
+  assert.deepEqual(eventNames, [
+    "play",
+    "loadedmetadata",
+    "playing",
+    "pause",
+    "seeked",
+    "ended",
+    "emptied",
+  ]);
+});
+
 test("changes native-player eligibility without reinstalling the Jellyfin adapter", async (t) => {
   const listeners = new Map();
   const bridge = {

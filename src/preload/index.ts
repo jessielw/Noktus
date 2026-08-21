@@ -59,6 +59,7 @@ const eventNames = new Set<MpvEventName>([
   "mode",
 ]);
 const eventCallbacks = new Map<MpvEventName, Set<MpvEventCallback>>();
+const presenceSyncCallbacks = new Set<() => void>();
 
 ipcRenderer.on("jdc:mpv:event", (_event, eventName: unknown, payload: unknown) => {
   if (typeof eventName !== "string" || !eventNames.has(eventName as MpvEventName)) {
@@ -69,6 +70,9 @@ ipcRenderer.on("jdc:mpv:event", (_event, eventName: unknown, payload: unknown) =
   const safePayload =
     payload && typeof payload === "object" ? (payload as MpvEventPayload) : {};
   for (const callback of callbacks) callback(safePayload);
+});
+ipcRenderer.on("jdc:presence:sync", () => {
+  for (const callback of presenceSyncCallbacks) callback();
 });
 
 const desktopBridge: DesktopBridge = {
@@ -99,6 +103,11 @@ const desktopBridge: DesktopBridge = {
   focusApp: () => ipcRenderer.invoke("jdc:focus-app"),
   playHere: (url) => ipcRenderer.invoke("jdc:play-here", url),
   openExternal: (url) => ipcRenderer.invoke("jdc:open-external", url),
+  updatePresence: (activity) => ipcRenderer.invoke("jdc:presence:update", activity),
+  clearPresence: () => ipcRenderer.invoke("jdc:presence:clear"),
+  onPresenceSync: (callback) => {
+    if (typeof callback === "function") presenceSyncCallbacks.add(callback);
+  },
   on: (name, callback) => {
     if (!eventNames.has(name) || typeof callback !== "function") return;
     let callbacks = eventCallbacks.get(name);

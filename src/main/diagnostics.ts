@@ -23,6 +23,11 @@ export interface NoktusDiagnostics {
     mpvProfile: string | null;
     startMpvFullscreen: boolean;
   };
+  presence: {
+    enabled: boolean;
+    provider: string;
+    connection: string;
+  };
   mpv: {
     available: boolean;
     supported: boolean;

@@ -10,7 +10,7 @@ import type {
   ServerProfile,
 } from "./types";
 
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 
 interface SettingsLogger {
   warn(...values: unknown[]): void;
@@ -96,6 +96,7 @@ export function normalizeSettings(raw: unknown = {}): AppSettings {
     : servers[0]?.id;
   const normalized: AppSettings = {
     version: SETTINGS_VERSION,
+    discordRichPresenceEnabled: source.discordRichPresenceEnabled !== false,
     playbackMode,
     startMpvFullscreen: source.startMpvFullscreen !== false,
     mpvPresentation,

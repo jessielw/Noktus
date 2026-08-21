@@ -25,6 +25,9 @@ import {
   supportsRuntimeTarget,
 } from "../shared/compatibility";
 import { createDiagnosticsReport, type NoktusDiagnostics } from "./diagnostics";
+import { PresenceCoordinator } from "./presence/coordinator";
+import { DiscordIpcProvider } from "./presence/discord-ipc";
+import { normalizePresenceActivity } from "./presence/types";
 import { installFileLogging } from "./logging";
 import { MpvController, normalizeMpvPresentation } from "./playback/mpv-controller";
 import { inspectMpvExecutable } from "./playback/mpv-diagnostics";
@@ -105,6 +108,10 @@ import type {
 
 const APP_NAME = PRODUCT_IDENTITY.name;
 const LOG_PREFIX = `[${APP_NAME}]`;
+// Discord application IDs are public. The override is useful for local testing only.
+const DISCORD_APPLICATION_ID =
+  process.env.NOKTUS_DISCORD_APPLICATION_ID || "1540440229956296835";
+const DISCORD_LARGE_IMAGE_KEY = "noktus";
 const MAIN_WINDOW_DEFAULT_WIDTH = 1280;
 const MAIN_WINDOW_DEFAULT_HEIGHT = 800;
 const MAIN_WINDOW_MIN_WIDTH = 640;
@@ -175,6 +182,12 @@ let windowStatePath: string | null = null;
 let logDirectory: string | null = null;
 let logFilePath: string | null = null;
 let persistedSettings: AppSettings = normalizeSettings();
+const presence = new PresenceCoordinator(
+  new DiscordIpcProvider({
+    applicationId: DISCORD_APPLICATION_ID,
+    largeImageKey: DISCORD_LARGE_IMAGE_KEY,
+  }),
+);
 let persistedWindowState: WindowState | null = null;
 let activeSeriesTrackContext: SeriesTrackContext | null = null;
 let windowStateSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -226,6 +239,8 @@ interface MainRecoveryState {
 interface SettingsSmokeReport {
   title: string;
   hasForm: boolean;
+  hasDiscordPresence: boolean;
+  hasDiscordPresenceStatus: boolean;
   hasMpvInstallLinks: boolean;
   hasMpvPath: boolean;
   hasMpvTest: boolean;
@@ -540,6 +555,7 @@ function initializeRuntime(): void {
   settingsPath = path.join(userDataPath, "settings.json");
   windowStatePath = path.join(userDataPath, "window-state.json");
   persistedSettings = loadSettings(settingsPath);
+  presence.setEnabled(persistedSettings.discordRichPresenceEnabled);
   persistedWindowState = loadWindowState(windowStatePath);
   const rawServerUrl =
     commandLineOption("server-url") ||
@@ -601,6 +617,9 @@ function assertTrustedSender(event: SenderEvent): void {
 }
 
 function emitMpvEvent(name: MpvEventName, payload: MpvEventPayload = {}): void {
+  if ((["ended", "quit", "failed"] as MpvEventName[]).includes(name)) {
+    presence.clear();
+  }
   if ((["ended", "quit", "failed"] as MpvEventName[]).includes(name)) {
     activeSeriesTrackContext = null;
     installMenu();
@@ -754,6 +773,8 @@ function assertServersSender(event: SenderEvent): void {
 
 async function settingsSnapshot(): Promise<SettingsSnapshot> {
   return {
+    discordRichPresenceEnabled: persistedSettings.discordRichPresenceEnabled,
+    discordPresenceConnection: presence.status().connection,
     playbackMode: currentMode,
     startMpvFullscreen,
     mpvPresentation,
@@ -1231,6 +1252,10 @@ function runSettingsSmoke(): void {
         return {
           title: document.title,
           hasForm: Boolean(document.getElementById('settings-form')),
+          hasDiscordPresence: Boolean(document.getElementById('discord-rich-presence')),
+          hasDiscordPresenceStatus:
+            typeof settings.discordRichPresenceEnabled === 'boolean' &&
+            typeof settings.discordPresenceConnection === 'string',
           hasMpvInstallLinks:
             document.getElementById('install-mpv')?.href ===
               'https://mpv.io/installation/' &&
@@ -1251,6 +1276,8 @@ function runSettingsSmoke(): void {
       })()`)) as SettingsSmokeReport;
       if (
         !report.hasForm ||
+        !report.hasDiscordPresence ||
+        !report.hasDiscordPresenceStatus ||
         !report.hasMpvInstallLinks ||
         !report.hasMpvPath ||
         !report.hasMpvTest ||
@@ -1890,6 +1917,7 @@ async function applySettings(rawSettings: unknown): Promise<SettingsSnapshot> {
   const requestedProfile = normalizeMpvProfile(source.mpvProfile);
   const nextSettings = normalizeSettings({
     ...persistedSettings,
+    discordRichPresenceEnabled: source.discordRichPresenceEnabled,
     playbackMode: source.playbackMode,
     startMpvFullscreen: source.startMpvFullscreen,
     mpvPresentation: source.mpvPresentation,
@@ -1900,7 +1928,12 @@ async function applySettings(rawSettings: unknown): Promise<SettingsSnapshot> {
   const previousPresentation = mpvPresentation;
   const previousProfile = mpvProfile;
 
+  const presenceWasEnabled = persistedSettings.discordRichPresenceEnabled;
   savePersistedSettings(nextSettings);
+  presence.setEnabled(nextSettings.discordRichPresenceEnabled);
+  if (!presenceWasEnabled && nextSettings.discordRichPresenceEnabled) {
+    mainWindow?.webContents.send("jdc:presence:sync");
+  }
   startMpvFullscreen = nextSettings.startMpvFullscreen;
   mpvPresentation = normalizeMpvPresentation(nextSettings.mpvPresentation);
   mpvProfile = nextSettings.mpvProfile;
@@ -2030,6 +2063,18 @@ function registerIpc(): void {
       reason: status.reason || diagnostic.reason,
       startFullscreen: startMpvFullscreen,
     };
+  });
+  ipcMain.handle("jdc:presence:update", (event: IpcMainInvokeEvent, value: unknown) => {
+    assertTrustedSender(event);
+    const activity = normalizePresenceActivity(value);
+    if (!activity) return false;
+    presence.update(activity);
+    return true;
+  });
+  ipcMain.handle("jdc:presence:clear", (event: IpcMainInvokeEvent) => {
+    assertTrustedSender(event);
+    presence.clear();
+    return true;
   });
   ipcMain.handle(
     "jdc:series-tracks:resolve",
@@ -2380,6 +2425,7 @@ async function collectDiagnostics(): Promise<string> {
       mpvProfile: mpvProfile || null,
       startMpvFullscreen,
     },
+    presence: presence.status(),
     mpv: {
       available: mpv.available,
       supported: mpv.supported,
@@ -2682,6 +2728,7 @@ function createWindow({
       void shell.openExternal(url);
     }
   });
+  window.webContents.on("did-start-loading", () => presence.clear());
   window.webContents.setWindowOpenHandler(({ url }) => {
     try {
       if (["http:", "https:"].includes(new URL(url).protocol))
@@ -2722,6 +2769,7 @@ app.on("before-quit", (event) => {
   if (quitting) return;
   if (!mpvController || !mainWindow || mainWindow.isDestroyed()) {
     quitting = true;
+    presence.close();
     closeMpvController();
     return;
   }
@@ -2736,6 +2784,7 @@ app.on("before-quit", (event) => {
       );
     })
     .finally(() => {
+      presence.close();
       closeMpvController();
       app.quit();
     });

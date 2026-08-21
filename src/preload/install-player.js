@@ -24,8 +24,117 @@ function installPlayer(config) {
   const bridge = window.jellyfinDesktop;
   const state = { backend: config.backend, startFullscreen: true };
   let activeMpvPlayer = null;
+  let activeWebMedia = null;
+
+  function publishPresence(activity) {
+    if (!activity || typeof bridge.updatePresence !== "function") return;
+    Promise.resolve(bridge.updatePresence(activity)).catch(() => {});
+  }
+
+  function clearPresence() {
+    if (typeof bridge.clearPresence !== "function") return;
+    Promise.resolve(bridge.clearPresence()).catch(() => {});
+  }
+
+  function presenceTitle() {
+    try {
+      const title = navigator.mediaSession?.metadata?.title;
+      if (typeof title === "string" && title.trim()) return title.trim();
+    } catch {
+      // Media Session metadata is optional in Jellyfin Web.
+    }
+    const title = String(document.title || "").trim();
+    const normalized = title.replace(/\s*[-|]\s*Jellyfin\s*$/i, "").trim();
+    return normalized.toLowerCase() === "jellyfin" ? "" : normalized;
+  }
+
+  function publishWebPresence(media) {
+    if (state.backend !== "web" || !media || media.paused || media.ended) return;
+    const title = presenceTitle();
+    if (!title) return;
+    publishPresence({
+      title,
+      mediaType: media instanceof HTMLAudioElement ? "audio" : "video",
+      playbackState: "playing",
+      positionSeconds: Math.max(0, Number(media.currentTime) || 0),
+    });
+  }
+
+  function publishPausedWebPresence(media) {
+    if (state.backend !== "web" || !media || media.ended) return;
+    const title = presenceTitle();
+    if (!title) {
+      clearPresence();
+      return;
+    }
+    publishPresence({
+      title,
+      mediaType: media instanceof HTMLAudioElement ? "audio" : "video",
+      playbackState: "paused",
+      positionSeconds: Math.max(0, Number(media.currentTime) || 0),
+    });
+  }
+
+  function installWebPresenceObserver() {
+    if (typeof document === "undefined" || !document.addEventListener) return;
+    document.addEventListener(
+      "play",
+      (event) => {
+        const media = event.target;
+        if (!(media instanceof HTMLMediaElement) || state.backend !== "web") return;
+        activeWebMedia = media;
+        publishWebPresence(media);
+      },
+      true,
+    );
+    for (const eventName of ["loadedmetadata", "playing"]) {
+      document.addEventListener(
+        eventName,
+        (event) => {
+          const media = event.target;
+          if (media === activeWebMedia) publishWebPresence(media);
+        },
+        true,
+      );
+    }
+    document.addEventListener(
+      "pause",
+      (event) => {
+        const media = event.target;
+        if (media !== activeWebMedia) return;
+        publishPausedWebPresence(media);
+      },
+      true,
+    );
+    document.addEventListener(
+      "seeked",
+      (event) => {
+        const media = event.target;
+        if (media !== activeWebMedia) return;
+        if (media.paused) publishPausedWebPresence(media);
+        else publishWebPresence(media);
+      },
+      true,
+    );
+    for (const eventName of ["ended", "emptied"]) {
+      document.addEventListener(
+        eventName,
+        (event) => {
+          if (event.target !== activeWebMedia) return;
+          activeWebMedia = null;
+          clearPresence();
+        },
+        true,
+      );
+    }
+  }
+
   bridge.on("mode", (payload) => {
-    if (["web", "mpv"].includes(payload?.value)) state.backend = payload.value;
+    if (["web", "mpv"].includes(payload?.value)) {
+      state.backend = payload.value;
+      if (state.backend === "web") publishWebPresence(activeWebMedia);
+      else clearPresence();
+    }
   });
   const bridgeReady = bridge
     .status()
@@ -56,6 +165,13 @@ function installPlayer(config) {
       });
     }
   });
+  if (typeof bridge.onPresenceSync === "function") {
+    bridge.onPresenceSync(() => {
+      if (state.backend === "web") publishWebPresence(activeWebMedia);
+      else activeMpvPlayer?._publishPresence();
+    });
+  }
+  installWebPresenceObserver();
 
   const mpvProfile = {
     Name: "Noktus Electron MPV",
@@ -690,12 +806,14 @@ function installPlayer(config) {
         this._seriesTrackPersistenceReady = true;
         this._paused = false;
         this.events.trigger(this, "playing");
+        this._publishPresence();
         this._scheduleNavigationRefresh();
       });
       bridge.on("paused", (payload) => {
         const paused = Boolean(payload?.value);
         const changed = this._paused !== paused;
         this._paused = paused;
+        this._publishPresence();
         if (changed) this.events.trigger(this, paused ? "pause" : "unpause");
       });
       bridge.on("position", (payload) => {
@@ -833,6 +951,7 @@ function installPlayer(config) {
       this._navigation = { previous: false, next: false };
       this._playGeneration += 1;
       if (activeMpvPlayer === this) activeMpvPlayer = null;
+      clearPresence();
       if (typeof bridge.clearSeriesTrackContext === "function") {
         invoke("clearSeriesTrackContext").catch(() => {});
       }
@@ -1010,10 +1129,13 @@ function installPlayer(config) {
       return this.stop();
     }
     pause() {
+      this._paused = true;
+      this._publishPresence();
       invoke("pause").catch(() => {});
     }
     resume() {
       this._paused = false;
+      this._publishPresence();
       invoke("play").catch(() => {});
     }
     unpause() {
@@ -1028,9 +1150,22 @@ function installPlayer(config) {
     currentTime(value) {
       if (value != null) {
         this._currentTime = Number(value);
+        this._publishPresence();
         invoke("seek", this._currentTime / 1000).catch(() => {});
       }
       return this._currentTime;
+    }
+
+    _publishPresence() {
+      if (!this._options || !this._currentSrc || state.backend !== "mpv") return;
+      const title = playbackTitle(this._options);
+      if (!title) return;
+      publishPresence({
+        title,
+        mediaType: this._options.item?.MediaType === "Audio" ? "audio" : "video",
+        playbackState: this._paused ? "paused" : "playing",
+        positionSeconds: Math.max(0, Number(this._currentTime) / 1000 || 0),
+      });
     }
     currentTimeAsync() {
       return Promise.resolve(this._currentTime);

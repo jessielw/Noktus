@@ -2,6 +2,8 @@
 
 const form = document.getElementById("settings-form");
 const playbackMode = document.getElementById("playback-mode");
+const discordRichPresence = document.getElementById("discord-rich-presence");
+const discordRichPresenceHelp = document.getElementById("discord-rich-presence-help");
 const mpvSettings = document.getElementById("mpv-settings");
 const mpvPath = document.getElementById("mpv-path");
 const mpvPresentation = document.getElementById("mpv-presentation");
@@ -22,6 +24,17 @@ const version = document.getElementById("version");
 
 function updateMpvState() {
   mpvSettings.classList.toggle("inactive", playbackMode.value !== "mpv");
+}
+
+function renderDiscordPresence(connection) {
+  const details = {
+    disabled: "Enable this to share title-only playback activity with Discord.",
+    unconfigured: "Discord Rich Presence is not configured in this Noktus build.",
+    connecting: "Connecting to Discord…",
+    connected: "Connected to Discord. Playback will appear while playing.",
+    unavailable: "Discord is not running or is unavailable. Noktus will retry quietly.",
+  };
+  discordRichPresenceHelp.textContent = details[connection] || details.unavailable;
 }
 
 function setBusy(value) {
@@ -88,6 +101,8 @@ function renderMpvDiagnostic(diagnostic) {
 async function initialize() {
   try {
     const settings = await window.settingsApi.load();
+    discordRichPresence.checked = settings.discordRichPresenceEnabled;
+    renderDiscordPresence(settings.discordPresenceConnection);
     playbackMode.value = settings.playbackMode;
     mpvPath.value = settings.mpvPath || "";
     mpvPresentation.value = settings.mpvPresentation;
@@ -180,6 +195,7 @@ form.addEventListener("submit", async (event) => {
   try {
     await window.settingsApi.save({
       playbackMode: playbackMode.value,
+      discordRichPresenceEnabled: discordRichPresence.checked,
       mpvPath: mpvPath.value,
       mpvPresentation: mpvPresentation.value,
       mpvProfile: mpvProfile.value,

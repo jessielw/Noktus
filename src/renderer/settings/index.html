@@ -21,6 +21,19 @@
       </header>
 
       <form id="settings-form">
+        <label class="presence-setting" for="discord-rich-presence">
+          <input
+            id="discord-rich-presence"
+            name="discordRichPresenceEnabled"
+            type="checkbox"
+          />
+          <span class="presence-label">Enable Discord Rich Presence</span>
+          <small id="discord-rich-presence-help"
+            >Shows the title you are watching or listening to when Discord is
+            running.</small
+          >
+        </label>
+
         <label class="field" for="playback-mode">
           <span>Video player</span>
           <select id="playback-mode" name="playbackMode">

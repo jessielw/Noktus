@@ -33,6 +33,7 @@ export interface ServerConnectionStatus {
 
 export interface AppSettings {
   version: number;
+  discordRichPresenceEnabled: boolean;
   playbackMode: PlaybackMode;
   startMpvFullscreen: boolean;
   mpvPresentation: MpvPresentation;
@@ -44,6 +45,9 @@ export interface AppSettings {
 }
 
 export interface SettingsSnapshot {
+  discordRichPresenceEnabled: boolean;
+  discordPresenceConnection:
+    "disabled" | "unconfigured" | "connecting" | "connected" | "unavailable";
   playbackMode: PlaybackMode;
   startMpvFullscreen: boolean;
   mpvPresentation: MpvPresentation;
@@ -221,6 +225,9 @@ export interface DesktopBridge {
   focusApp(): Promise<boolean>;
   playHere(url: string): Promise<boolean>;
   openExternal(url: string): Promise<boolean>;
+  updatePresence(activity: unknown): Promise<boolean>;
+  clearPresence(): Promise<boolean>;
+  onPresenceSync(callback: () => void): void;
   on(name: MpvEventName, callback: (payload: MpvEventPayload) => void): void;
 }
 

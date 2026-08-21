@@ -27,6 +27,7 @@ test("migrates single-server settings into the server list", () => {
     }),
     {
       version: SETTINGS_VERSION,
+      discordRichPresenceEnabled: true,
       playbackMode: "mpv",
       startMpvFullscreen: false,
       mpvPresentation: "user",
@@ -47,6 +48,7 @@ test("migrates single-server settings into the server list", () => {
 test("uses safe defaults for missing or unsupported settings", () => {
   assert.deepEqual(normalizeSettings({ playbackMode: "broken" }), {
     version: SETTINGS_VERSION,
+    discordRichPresenceEnabled: true,
     playbackMode: "web",
     startMpvFullscreen: true,
     mpvPresentation: "jellyfin",
@@ -179,6 +181,7 @@ test("round trips settings through the versioned JSON file", (t) => {
 
   assert.deepEqual(loadSettings(filePath), {
     version: SETTINGS_VERSION,
+    discordRichPresenceEnabled: true,
     playbackMode: "mpv",
     startMpvFullscreen: false,
     mpvPresentation: "jellyfin",

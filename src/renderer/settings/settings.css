@@ -227,6 +227,27 @@ code {
   accent-color: #9272e6;
 }
 
+.presence-setting {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 9px;
+  row-gap: 4px;
+  font-weight: 650;
+}
+
+.presence-setting input {
+  width: 18px;
+  min-height: 18px;
+  margin: 0;
+  accent-color: #9272e6;
+}
+
+.presence-setting small {
+  grid-column: 2;
+  font-weight: 400;
+}
+
 button {
   padding: 8px 15px;
   color: white;
