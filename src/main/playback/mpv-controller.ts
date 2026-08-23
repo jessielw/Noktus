@@ -19,6 +19,7 @@ import type {
   MpvSubtitleTrack,
 } from "../../shared/types";
 import { detectMpvProvider, isMpvProvider } from "./mpv-provider";
+import { TrickplayStore } from "./trickplay-store";
 
 const COMMAND_TIMEOUT_MS = 5000;
 const START_TIMEOUT_MS = 5000;
@@ -224,11 +225,18 @@ export function buildMpvArguments(
   }
   if (normalizeMpvPresentation(presentation) === "jellyfin") {
     args.push(
-      "--osc=yes",
+      "--osc=no",
       "--osd-on-seek=msg-bar",
       "--osd-duration=1800",
       ...JELLYFIN_OSC_OPTIONS.map((option) => `--script-opts-append=${option}`),
     );
+    if (integrationScript) {
+      const scriptDirectory = path.dirname(integrationScript);
+      args.push(
+        `--script=${path.join(scriptDirectory, "thumbfast.lua")}`,
+        `--script=${path.join(scriptDirectory, "trickplay-osc.lua")}`,
+      );
+    }
   }
   if (integrationScript) args.push(`--script=${integrationScript}`);
   return args;
@@ -352,6 +360,7 @@ export class MpvController {
   readonly profile: string | undefined;
   readonly integrationScript: string | null;
   readonly eventSink: MpvEventSink;
+  readonly trickplay: TrickplayStore;
   child: ChildProcess | null = null;
   socket: net.Socket | null = null;
   buffer = "";
@@ -392,6 +401,7 @@ export class MpvController {
     this.profile = normalizeMpvProfile(profile);
     this.integrationScript = integrationScript;
     this.eventSink = eventSink;
+    this.trickplay = new TrickplayStore((command) => this.command(command));
   }
 
   get ready(): boolean {
@@ -442,6 +452,14 @@ export class MpvController {
 
     if (this.integrationScript && !fs.existsSync(this.integrationScript)) {
       throw new Error(`MPV integration script is missing: ${this.integrationScript}`);
+    }
+    if (this.presentation === "jellyfin" && this.integrationScript) {
+      for (const name of ["thumbfast.lua", "trickplay-osc.lua"]) {
+        const scriptPath = path.join(path.dirname(this.integrationScript), name);
+        if (!fs.existsSync(scriptPath)) {
+          throw new Error(`MPV trickplay script is missing: ${scriptPath}`);
+        }
+      }
     }
     const args = buildMpvArguments(
       this.ipcPath,
@@ -576,6 +594,13 @@ export class MpvController {
       const args = Array.isArray(message.args) ? message.args : [];
       const namespace = args[0];
       const action = args[1];
+      if (namespace === "shim-trickplay-need") {
+        const seconds = Number(action);
+        if (Number.isFinite(seconds) && seconds >= 0 && seconds <= 315360000) {
+          this.emit("trickplayNeed", { seconds });
+        }
+        return;
+      }
       let navigationAction: "next" | "previous" | null = null;
       if (action === "next") navigationAction = "next";
       if (action === "previous") navigationAction = "previous";
@@ -602,6 +627,7 @@ export class MpvController {
       this.pendingSegments = [];
       this.pendingNavigation = { ...EMPTY_NAVIGATION };
       this.pendingLoad = null;
+      void this.trickplay.clear(this.ready);
       this.resetSubtitleTrackMap();
       if (!wasCurrent) return;
       if (message.reason === "error") {
@@ -819,6 +845,7 @@ export class MpvController {
 
   async loadRequest(request: MpvLoadRequest): Promise<true> {
     await this.ensureStarted();
+    await this.trickplay.clear();
     await this.command(["set_property", "fullscreen", request.fullscreen]);
     await this.command(["set_property", "pause", false]);
     await this.command(["set_property", "force-media-title", request.title]);
@@ -867,6 +894,7 @@ export class MpvController {
 
   async execute(name: string, value?: unknown): Promise<true> {
     if (name === "stop" && !this.ready) {
+      await this.trickplay.clear(false);
       this.current = false;
       this.replacing = false;
       this.fileLoaded = false;
@@ -934,6 +962,7 @@ export class MpvController {
     const makeCommand = commands[name];
     if (!makeCommand) throw new Error(`Unsupported MPV command: ${name}`);
     if (name === "stop") {
+      await this.trickplay.clear();
       this.current = false;
       this.replacing = false;
       this.fileLoaded = false;
@@ -944,6 +973,29 @@ export class MpvController {
     }
     await this.command(makeCommand());
     return true;
+  }
+
+  beginTrickplay(value: unknown): Promise<string | null> {
+    if (this.presentation !== "jellyfin" || !this.current) {
+      return Promise.resolve(null);
+    }
+    return this.trickplay.begin(value);
+  }
+
+  appendTrickplay(id: unknown, chunk: unknown): Promise<true> {
+    return this.trickplay.append(id, chunk);
+  }
+
+  commitTrickplay(id: unknown): Promise<true> {
+    return this.trickplay.commit(id);
+  }
+
+  abortTrickplay(id: unknown): Promise<true> {
+    return this.trickplay.abort(id);
+  }
+
+  clearTrickplay(): Promise<true> {
+    return this.trickplay.clear(this.ready);
   }
 
   onProcessError(child: ChildProcess, error: Error): void {
@@ -967,6 +1019,7 @@ export class MpvController {
     this.pendingSegments = [];
     this.pendingNavigation = { ...EMPTY_NAVIGATION };
     this.pendingLoad = null;
+    void this.trickplay.clear(false);
     if (this.socket) this.socket.destroy();
     this.socket = null;
     this.failPending(new Error(`MPV exited (${signal ?? code ?? "unknown"})`));
@@ -998,6 +1051,7 @@ export class MpvController {
     this.buffer = "";
     this.failPending(new Error("MPV connection was replaced"));
     this.terminateProcess();
+    void this.trickplay.clear(false);
     this.removeSocketFile();
   }
 
@@ -1029,6 +1083,7 @@ export class MpvController {
     this.pendingSegments = [];
     this.pendingNavigation = { ...EMPTY_NAVIGATION };
     this.fileLoaded = false;
+    void this.trickplay.clear(false);
     this.teardownConnection();
     this.emit("ready", { ready: false });
   }

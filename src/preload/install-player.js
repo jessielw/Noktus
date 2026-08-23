@@ -23,6 +23,9 @@ function installPlayer(config) {
 
   const bridge = window.jellyfinDesktop;
   const state = { backend: config.backend, startFullscreen: true };
+  const TRICKPLAY_WINDOW_BYTES = 24 * 1024 * 1024;
+  const TRICKPLAY_CHUNK_BYTES = 1536 * 1024;
+  const TRICKPLAY_MAX_TILE_BYTES = 128 * 1024 * 1024;
   let activeMpvPlayer = null;
   let activeWebMedia = null;
 
@@ -347,6 +350,47 @@ function installPlayer(config) {
     return "";
   }
 
+  function authorizationValue(value) {
+    return encodeURIComponent(String(value)).replace(
+      /[!'()*]/g,
+      (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+    );
+  }
+
+  function mediaBrowserAuthorization(apiClient) {
+    const token = apiClientValue(apiClient, ["accessToken"]);
+    if (!token) return "";
+    const values = [
+      ["Token", token],
+      ["Client", config.appName || "Noktus"],
+      ["Version", config.appVersion || "0.0.0"],
+      ["Device", config.deviceName || "Electron"],
+    ];
+    const deviceId = apiClientValue(apiClient, ["deviceId", "getDeviceId"]);
+    if (deviceId) values.push(["DeviceId", deviceId]);
+    return `MediaBrowser ${values
+      .map(([name, value]) => `${name}="${authorizationValue(value)}"`)
+      .join(", ")}`;
+  }
+
+  function apiHeaders(apiClient, accept) {
+    const headers = { Accept: accept };
+    const authorization = mediaBrowserAuthorization(apiClient);
+    if (authorization) headers.Authorization = authorization;
+    return headers;
+  }
+
+  async function apiJson(apiClient, url) {
+    if (typeof apiClient.getJSON === "function") {
+      return apiClient.getJSON(url.href);
+    }
+    const response = await fetch(url.href, {
+      headers: apiHeaders(apiClient, "application/json"),
+    });
+    if (!response.ok) throw new Error(`Jellyfin returned HTTP ${response.status}`);
+    return response.json();
+  }
+
   async function currentUserId(item) {
     const apiClient = apiClientFor(item);
     if (!apiClient) return "";
@@ -500,43 +544,262 @@ function installPlayer(config) {
       url.searchParams.append("includeSegmentTypes", type),
     );
 
-    function authorizationValue(value) {
-      return encodeURIComponent(String(value)).replace(
-        /[!'()*]/g,
-        (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
-      );
-    }
-
-    function mediaBrowserAuthorization(token) {
-      if (!token) return "";
-      const values = [
-        ["Token", token],
-        ["Client", config.appName || "Noktus"],
-        ["Version", config.appVersion || "0.0.0"],
-        ["Device", config.deviceName || "Electron"],
-      ];
-      const deviceId = apiClientValue(apiClient, ["deviceId", "getDeviceId"]);
-      if (deviceId) values.push(["DeviceId", deviceId]);
-      return `MediaBrowser ${values
-        .map(([name, value]) => `${name}="${authorizationValue(value)}"`)
-        .join(", ")}`;
-    }
-
     try {
-      if (typeof apiClient.getJSON === "function") {
-        return normalizeMediaSegments(await apiClient.getJSON(url.href));
-      }
-
-      const headers = { Accept: "application/json" };
-      const token = apiClientValue(apiClient, ["accessToken"]);
-      const authorization = mediaBrowserAuthorization(token);
-      if (authorization) headers.Authorization = authorization;
-      const response = await fetch(url.href, { headers });
-      if (!response.ok) return [];
-      return normalizeMediaSegments(await response.json());
+      return normalizeMediaSegments(await apiJson(apiClient, url));
     } catch (error) {
       console.debug("[Noktus] MediaSegments unavailable:", error);
       return [];
+    }
+  }
+
+  function normalizeTrickplayManifest(value, itemId, mediaSourceId) {
+    const trickplay = value?.Trickplay;
+    if (!trickplay || typeof trickplay !== "object") return null;
+
+    // Jellyfin exposes Trickplay as media-source ID -> width -> metadata.
+    // Older/test clients may already hand us the inner width dictionary, so
+    // retain support for that shape while preferring the selected source.
+    const topLevelEntries = Object.entries(trickplay);
+    const isResolutionDictionary = topLevelEntries.some(
+      ([, candidate]) =>
+        candidate &&
+        typeof candidate === "object" &&
+        (candidate.Width != null || candidate.Height != null),
+    );
+    let selectedMediaSourceId = mediaSourceId;
+    let resolutionDictionary = trickplay;
+    if (!isResolutionDictionary) {
+      let selected = mediaSourceId ? trickplay[mediaSourceId] : null;
+      if (!selected || typeof selected !== "object") {
+        const fallback = topLevelEntries.find(
+          ([, candidate]) => candidate && typeof candidate === "object",
+        );
+        if (!fallback) return null;
+        selectedMediaSourceId = fallback[0];
+        selected = fallback[1];
+      }
+      resolutionDictionary = selected;
+    }
+
+    const resolutions = Object.entries(resolutionDictionary)
+      .map(([key, candidate]) => {
+        const width = Number(candidate?.Width ?? key);
+        const height = Number(candidate?.Height);
+        const intervalMs = Number(candidate?.Interval);
+        const thumbnailCount = Number(candidate?.ThumbnailCount);
+        const tileWidth = Number(candidate?.TileWidth);
+        const tileHeight = Number(candidate?.TileHeight);
+        if (
+          !Number.isInteger(width) ||
+          !Number.isInteger(height) ||
+          !Number.isInteger(intervalMs) ||
+          !Number.isInteger(thumbnailCount) ||
+          !Number.isInteger(tileWidth) ||
+          !Number.isInteger(tileHeight) ||
+          width < 1 ||
+          width > 1920 ||
+          height < 1 ||
+          height > 1920 ||
+          intervalMs < 1 ||
+          intervalMs > 60 * 60 * 1000 ||
+          thumbnailCount < 1 ||
+          thumbnailCount > 100000 ||
+          tileWidth < 1 ||
+          tileWidth > 20 ||
+          tileHeight < 1 ||
+          tileHeight > 20 ||
+          width * height * 4 > TRICKPLAY_WINDOW_BYTES ||
+          width * tileWidth * height * tileHeight * 4 > TRICKPLAY_MAX_TILE_BYTES
+        ) {
+          return null;
+        }
+        return {
+          itemId,
+          mediaSourceId: selectedMediaSourceId,
+          width,
+          height,
+          intervalMs,
+          thumbnailCount,
+          tileWidth,
+          tileHeight,
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => left.width - right.width);
+    return resolutions[0] || null;
+  }
+
+  async function fetchTrickplayManifest(item, mediaSource) {
+    const itemId = String(item?.Id || "");
+    if (!itemId) return null;
+    const mediaSourceId = String(mediaSource?.Id || "");
+    const apiClient = apiClientFor(item);
+    if (!apiClient) return null;
+
+    let source = item;
+    let manifest = normalizeTrickplayManifest(source, itemId, mediaSourceId);
+    if (manifest) return { ...manifest, apiClient };
+
+    const userId = await currentUserId(item);
+    if (!userId) return null;
+    const itemPath = `Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}`;
+    const rawUrl =
+      typeof apiClient.getUrl === "function"
+        ? apiClient.getUrl(itemPath)
+        : new URL(`${basePath}/${itemPath}`, server).href;
+    const url = new URL(rawUrl, location.href);
+    url.searchParams.set("Fields", "Trickplay");
+    source = await apiJson(apiClient, url);
+    manifest = normalizeTrickplayManifest(source, itemId, mediaSourceId);
+    return manifest ? { ...manifest, apiClient } : null;
+  }
+
+  function trickplayWindow(manifest, seconds) {
+    const bytesPerFrame = manifest.width * manifest.height * 4;
+    const capacity = Math.max(1, Math.floor(TRICKPLAY_WINDOW_BYTES / bytesPerFrame));
+    const count = Math.min(manifest.thumbnailCount, capacity);
+    const requested = Math.max(
+      0,
+      Math.min(
+        manifest.thumbnailCount - 1,
+        Math.floor((Math.max(0, seconds) * 1000) / manifest.intervalMs),
+      ),
+    );
+    const first = Math.max(
+      0,
+      Math.min(requested - Math.floor(count / 2), manifest.thumbnailCount - count),
+    );
+    return { first, count, requested };
+  }
+
+  function trickplayTileUrl(manifest, index) {
+    const tilePath = `Videos/${encodeURIComponent(manifest.itemId)}/Trickplay/${manifest.width}/${index}.jpg`;
+    const rawUrl =
+      typeof manifest.apiClient.getUrl === "function"
+        ? manifest.apiClient.getUrl(tilePath)
+        : new URL(`${basePath}/${tilePath}`, server).href;
+    const url = new URL(rawUrl, location.href);
+    if (manifest.mediaSourceId) {
+      url.searchParams.set("MediaSourceId", manifest.mediaSourceId);
+    }
+    return url;
+  }
+
+  async function fetchTrickplayTile(manifest, index) {
+    const response = await fetch(trickplayTileUrl(manifest, index).href, {
+      headers: apiHeaders(manifest.apiClient, "image/jpeg"),
+    });
+    if (!response.ok) {
+      throw new Error(`Trickplay tile ${index} returned HTTP ${response.status}`);
+    }
+    return createImageBitmap(await response.blob());
+  }
+
+  function bgraFrame(context, bitmap, manifest, tileFrame) {
+    const x = (tileFrame % manifest.tileWidth) * manifest.width;
+    const y = Math.floor(tileFrame / manifest.tileWidth) * manifest.height;
+    context.clearRect(0, 0, manifest.width, manifest.height);
+    context.drawImage(
+      bitmap,
+      x,
+      y,
+      manifest.width,
+      manifest.height,
+      0,
+      0,
+      manifest.width,
+      manifest.height,
+    );
+    const pixels = context.getImageData(0, 0, manifest.width, manifest.height).data;
+    for (let offset = 0; offset < pixels.length; offset += 4) {
+      const red = pixels[offset];
+      pixels[offset] = pixels[offset + 2];
+      pixels[offset + 2] = red;
+    }
+    return new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
+  }
+
+  async function emitTrickplayWindow(manifest, seconds, isCurrent) {
+    const window = trickplayWindow(manifest, seconds);
+    const generation = await invoke("beginTrickplay", {
+      count: window.count,
+      intervalMs: manifest.intervalMs,
+      width: manifest.width,
+      height: manifest.height,
+      first: window.first,
+      total: manifest.thumbnailCount,
+    });
+    if (!generation) return null;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = manifest.width;
+    canvas.height = manifest.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      await invoke("abortTrickplay", generation).catch(() => {});
+      throw new Error("Canvas pixel access is unavailable");
+    }
+
+    let buffered = [];
+    let bufferedBytes = 0;
+    const flush = async () => {
+      if (!bufferedBytes) return;
+      const chunk = new Uint8Array(bufferedBytes);
+      let offset = 0;
+      for (const frame of buffered) {
+        chunk.set(frame, offset);
+        offset += frame.byteLength;
+      }
+      buffered = [];
+      bufferedBytes = 0;
+      await invoke("appendTrickplay", generation, chunk.buffer);
+    };
+    const appendFrame = async (bytes) => {
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const available = TRICKPLAY_CHUNK_BYTES - bufferedBytes;
+        const length = Math.min(available, bytes.byteLength - offset);
+        buffered.push(bytes.subarray(offset, offset + length));
+        bufferedBytes += length;
+        offset += length;
+        if (bufferedBytes === TRICKPLAY_CHUNK_BYTES) await flush();
+      }
+    };
+
+    try {
+      const perTile = manifest.tileWidth * manifest.tileHeight;
+      const last = window.first + window.count;
+      const firstTile = Math.floor(window.first / perTile);
+      const lastTile = Math.floor((last - 1) / perTile);
+      for (let tileIndex = firstTile; tileIndex <= lastTile; tileIndex += 1) {
+        if (!isCurrent()) throw new Error("Trickplay generation was cancelled");
+        const bitmap = await fetchTrickplayTile(manifest, tileIndex);
+        try {
+          if (
+            bitmap.width !== manifest.width * manifest.tileWidth ||
+            bitmap.height !== manifest.height * manifest.tileHeight
+          ) {
+            throw new Error(`Trickplay tile ${tileIndex} has unexpected dimensions`);
+          }
+          const tileFirst = tileIndex * perTile;
+          const from = Math.max(window.first, tileFirst);
+          const to = Math.min(last, tileFirst + perTile);
+          for (let frame = from; frame < to; frame += 1) {
+            if (!isCurrent()) throw new Error("Trickplay generation was cancelled");
+            const bytes = bgraFrame(context, bitmap, manifest, frame - tileFirst);
+            await appendFrame(bytes);
+          }
+        } finally {
+          if (typeof bitmap.close === "function") bitmap.close();
+        }
+      }
+      await flush();
+      if (!isCurrent()) throw new Error("Trickplay generation was cancelled");
+      await invoke("commitTrickplay", generation);
+      return window;
+    } catch (error) {
+      await invoke("abortTrickplay", generation).catch(() => {});
+      throw error;
     }
   }
 
@@ -787,6 +1050,8 @@ function installPlayer(config) {
       this._playGeneration = 0;
       this._navigationTimer = null;
       this._navigation = { previous: false, next: false };
+      this._trickplay = null;
+      this._managedMpvPresentation = false;
       this._wireBridge();
       if (typeof this.events?.on === "function") {
         for (const eventName of [
@@ -848,6 +1113,12 @@ function installPlayer(config) {
       );
       bridge.on("next", () => this._changeQueueItem("nextTrack"));
       bridge.on("previous", () => this._changeQueueItem("previousTrack"));
+      bridge.on("trickplayNeed", (payload) => {
+        const seconds = Number(payload?.seconds);
+        if (Number.isFinite(seconds) && seconds >= 0) {
+          this._requestTrickplay(seconds);
+        }
+      });
       bridge.on("ended", () => this._finish());
       bridge.on("quit", () => this._handleMpvQuit());
       bridge.on("failed", (payload) =>
@@ -902,6 +1173,7 @@ function installPlayer(config) {
         this._seriesTrackContext = seriesSelection.context;
         const status = await invoke("status");
         this._fullscreen = status.startFullscreen ?? state.startFullscreen;
+        this._managedMpvPresentation = status.presentation === "jellyfin";
         this._loadRequest = {
           url: options.url,
           startSeconds: this._currentTime / 1000,
@@ -914,6 +1186,12 @@ function installPlayer(config) {
           }),
         };
         await invoke("load", this._loadRequest);
+        if (
+          this._managedMpvPresentation &&
+          typeof bridge.beginTrickplay === "function"
+        ) {
+          this._initializeTrickplay(options, playGeneration, this._currentTime / 1000);
+        }
         this._scheduleNavigationRefresh(options, playGeneration);
         segmentsPromise
           .then((segments) => {
@@ -949,6 +1227,7 @@ function installPlayer(config) {
       if (this._navigationTimer) clearTimeout(this._navigationTimer);
       this._navigationTimer = null;
       this._navigation = { previous: false, next: false };
+      this._trickplay = null;
       this._playGeneration += 1;
       if (activeMpvPlayer === this) activeMpvPlayer = null;
       clearPresence();
@@ -984,6 +1263,90 @@ function installPlayer(config) {
             console.debug("[Noktus] Could not pass playlist state to MPV:", error);
           });
       }, 0);
+    }
+
+    async _initializeTrickplay(options, playGeneration, seconds) {
+      const trickplay = {
+        playGeneration,
+        manifest: null,
+        window: null,
+        wantSeconds: seconds,
+        loading: false,
+      };
+      this._trickplay = trickplay;
+      try {
+        const manifest = await fetchTrickplayManifest(
+          options.item,
+          options.mediaSource,
+        );
+        if (
+          this._trickplay !== trickplay ||
+          this._options !== options ||
+          this._playGeneration !== playGeneration ||
+          !this._currentSrc
+        ) {
+          return;
+        }
+        if (!manifest) {
+          this._trickplay = null;
+          return;
+        }
+        trickplay.manifest = manifest;
+        this._pumpTrickplay(trickplay);
+      } catch (error) {
+        if (this._trickplay === trickplay) this._trickplay = null;
+        console.debug("[Noktus] Trickplay metadata unavailable:", error);
+      }
+    }
+
+    _requestTrickplay(seconds) {
+      const trickplay = this._trickplay;
+      if (!trickplay) return;
+      trickplay.wantSeconds = Math.max(0, Number(seconds) || 0);
+      if (trickplay.manifest) this._pumpTrickplay(trickplay);
+    }
+
+    async _pumpTrickplay(trickplay) {
+      if (trickplay.loading || !trickplay.manifest) return;
+      trickplay.loading = true;
+      const isCurrent = () =>
+        this._trickplay === trickplay &&
+        this._playGeneration === trickplay.playGeneration &&
+        Boolean(this._currentSrc) &&
+        !this._failurePending;
+      try {
+        while (isCurrent() && trickplay.wantSeconds != null) {
+          const seconds = trickplay.wantSeconds;
+          trickplay.wantSeconds = null;
+          const requested = trickplayWindow(trickplay.manifest, seconds).requested;
+          const current = trickplay.window;
+          if (
+            current &&
+            requested >= current.first &&
+            requested < current.first + current.count
+          ) {
+            continue;
+          }
+          try {
+            const loaded = await emitTrickplayWindow(
+              trickplay.manifest,
+              seconds,
+              isCurrent,
+            );
+            if (loaded && isCurrent()) trickplay.window = loaded;
+          } catch (error) {
+            if (isCurrent()) {
+              console.debug("[Noktus] Could not load trickplay thumbnails:", error);
+            }
+            break;
+          }
+        }
+      } finally {
+        trickplay.loading = false;
+        if (isCurrent() && trickplay.wantSeconds != null) {
+          Promise.resolve().then(() => this._pumpTrickplay(trickplay));
+        }
+      }
     }
 
     async _prepareForShutdown(requestId) {
@@ -1096,6 +1459,13 @@ function installPlayer(config) {
       this._failurePending = false;
       this._loadRequest.startSeconds = this._currentTime / 1000;
       await invoke("load", this._loadRequest);
+      if (this._managedMpvPresentation) {
+        this._initializeTrickplay(
+          this._options,
+          this._playGeneration,
+          this._currentTime / 1000,
+        );
+      }
       if (typeof bridge.setNavigation === "function") {
         await invoke("setNavigation", this._navigation);
       }

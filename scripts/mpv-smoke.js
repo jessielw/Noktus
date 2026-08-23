@@ -13,6 +13,34 @@ async function main() {
   try {
     await controller.ensureStarted();
     if (!controller.status().ready) throw new Error("MPV did not report ready");
+    controller.current = true;
+    const trickplayId = await controller.beginTrickplay({
+      count: 1,
+      intervalMs: 1000,
+      width: 1,
+      height: 1,
+      first: 0,
+      total: 2,
+    });
+    if (!trickplayId) throw new Error("MPV rejected a valid trickplay window");
+    await controller.appendTrickplay(trickplayId, new Uint8Array([0, 0, 0, 255]));
+    await controller.commitTrickplay(trickplayId);
+    await controller.command([
+      "script-message-to",
+      "thumbfast",
+      "thumb",
+      "1",
+      "0",
+      "0",
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    if (!events.some((event) => event.name === "trickplayNeed")) {
+      throw new Error(
+        `MPV trickplay provider did not respond: ${JSON.stringify(events)}`,
+      );
+    }
+    await controller.clearTrickplay();
+    controller.current = false;
     await controller.execute("volume", 50);
     await controller.execute("muted", true);
     await controller.execute("muted", false);
@@ -58,8 +86,12 @@ async function main() {
     console.log("[Noktus] MPV fullscreen state is synchronized");
     console.log("[Noktus] MPV native OSD commands are accepted");
     console.log("[Noktus] MPV-to-Jellyfin control messages are accepted");
+    console.log("[Noktus] MPV trickplay provider messages are accepted");
     console.log("[Noktus] MPV loadfile command is accepted");
   } finally {
+    if (controller.status().ready) {
+      await controller.command(["quit"]).catch(() => {});
+    }
     controller.close();
   }
 }

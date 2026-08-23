@@ -195,6 +195,7 @@ export type MpvEventName =
   | "subtitleTrack"
   | "next"
   | "previous"
+  | "trickplayNeed"
   | "ended"
   | "quit"
   | "failed"
@@ -217,6 +218,11 @@ export interface DesktopBridge {
   setSubtitleTrack(streamIndex: number): Promise<boolean>;
   setSegments(segments: unknown): Promise<boolean>;
   setNavigation(navigation: unknown): Promise<boolean>;
+  beginTrickplay(metadata: unknown): Promise<string | null>;
+  appendTrickplay(id: string, chunk: ArrayBuffer): Promise<boolean>;
+  commitTrickplay(id: string): Promise<boolean>;
+  abortTrickplay(id: string): Promise<boolean>;
+  clearTrickplay(): Promise<boolean>;
   setFullscreen(fullscreen: boolean): Promise<boolean>;
   resolveSeriesTracks(context: unknown): Promise<SeriesTrackResolution>;
   rememberSeriesTracks(context: unknown): Promise<boolean>;

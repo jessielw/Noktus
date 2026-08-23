@@ -278,6 +278,155 @@ test("passes authenticated Jellyfin MediaSegments to native playback", async (t)
   listeners.get("ended")?.({});
 });
 
+test("decodes Jellyfin trickplay tiles into bounded BGRA windows", async (t) => {
+  const listeners = new Map();
+  const appended = [];
+  let beginMetadata = null;
+  let tileUrl = null;
+  let tileAuthorization = null;
+  let committed;
+  const committedPromise = new Promise((resolve) => {
+    committed = resolve;
+  });
+  const bridge = {
+    status: async () => ({
+      backend: "mpv",
+      startFullscreen: false,
+      presentation: "jellyfin",
+    }),
+    on: (name, callback) => listeners.set(name, callback),
+    load: async () => true,
+    beginTrickplay: async (metadata) => {
+      beginMetadata = metadata;
+      return "generation-1";
+    },
+    appendTrickplay: async (id, chunk) => {
+      assert.equal(id, "generation-1");
+      appended.push(...new Uint8Array(chunk));
+      return true;
+    },
+    commitTrickplay: async (id) => {
+      assert.equal(id, "generation-1");
+      committed();
+      return true;
+    },
+    abortTrickplay: async () => true,
+    openExternal: async () => true,
+  };
+  const apiClient = {
+    accessToken: () => "tile token",
+    getCurrentUserId: () => "user-id",
+    getUrl: (value) => `https://media.example/jellyfin/${value}`,
+    async getJSON(url) {
+      if (url.includes("MediaSegments")) return { Items: [] };
+      assert.match(url, /Users\/user-id\/Items\/movie-id/);
+      assert.match(url, /Fields=Trickplay/);
+      return {
+        Trickplay: {
+          "other-source": {
+            1: {
+              Width: 1,
+              Height: 1,
+              Interval: 5_000,
+              ThumbnailCount: 1,
+              TileWidth: 1,
+              TileHeight: 1,
+            },
+          },
+          "source-id": {
+            2: {
+              Width: 2,
+              Height: 1,
+              Interval: 10_000,
+              ThumbnailCount: 2,
+              TileWidth: 2,
+              TileHeight: 1,
+            },
+          },
+        },
+      };
+    },
+  };
+  let sourceX = 0;
+  const context = {
+    clearRect() {},
+    drawImage(_bitmap, x) {
+      sourceX = x;
+    },
+    getImageData() {
+      const red = sourceX === 0 ? 10 : 40;
+      const blue = sourceX === 0 ? 30 : 60;
+      return {
+        data: new Uint8ClampedArray([red, 20, blue, 255, red + 1, 21, blue + 1, 255]),
+      };
+    },
+  };
+
+  global.location = new URL("https://media.example/jellyfin/web/");
+  global.window = { jellyfinDesktop: bridge, ApiClient: apiClient };
+  global.document = {
+    getElementById: () => null,
+    createElement(name) {
+      assert.equal(name, "canvas");
+      return { width: 0, height: 0, getContext: () => context };
+    },
+  };
+  global.fetch = async (url, init) => {
+    tileUrl = String(url);
+    tileAuthorization = init.headers.Authorization;
+    return { ok: true, blob: async () => ({}) };
+  };
+  global.createImageBitmap = async () => ({ width: 4, height: 1, close() {} });
+  t.after(() => {
+    delete global.createImageBitmap;
+    delete global.fetch;
+    delete global.document;
+    delete global.location;
+    delete global.window;
+  });
+
+  installPlayer({
+    serverUrl: "https://media.example/jellyfin",
+    backend: "mpv",
+    appName: "Noktus",
+    appVersion: "test",
+    deviceName: "test",
+  });
+  const Player = await global.window.jellyfinDcMpvPlayer();
+  const player = new Player({
+    events: { trigger() {} },
+    appSettings: { get: () => 1, set() {} },
+    playbackManager: { syncPlayEnabled: false },
+  });
+  await player.play({
+    url: "https://media.example/jellyfin/Videos/movie-id/stream",
+    item: {
+      Id: "movie-id",
+      MediaType: "Video",
+      RunTimeTicks: 200_000_000,
+      Type: "Movie",
+    },
+    mediaSource: { Id: "source-id", MediaStreams: [] },
+  });
+  await committedPromise;
+
+  assert.deepEqual(beginMetadata, {
+    count: 2,
+    intervalMs: 10_000,
+    width: 2,
+    height: 1,
+    first: 0,
+    total: 2,
+  });
+  assert.match(tileUrl, /Trickplay\/2\/0\.jpg/);
+  assert.match(tileUrl, /MediaSourceId=source-id/);
+  assert.match(tileAuthorization, /Token="tile%20token"/);
+  assert.deepEqual(
+    appended,
+    [30, 20, 10, 255, 31, 21, 11, 255, 60, 20, 40, 255, 61, 21, 41, 255],
+  );
+});
+
 test("uses one standard MediaBrowser Authorization header for fallback API calls", async (t) => {
   const listeners = new Map();
   let request = null;

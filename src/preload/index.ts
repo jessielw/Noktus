@@ -52,6 +52,7 @@ const eventNames = new Set<MpvEventName>([
   "subtitleTrack",
   "next",
   "previous",
+  "trickplayNeed",
   "ended",
   "quit",
   "failed",
@@ -91,6 +92,12 @@ const desktopBridge: DesktopBridge = {
   setSegments: (segments) => ipcRenderer.invoke("jdc:mpv:setSegments", segments),
   setNavigation: (navigation) =>
     ipcRenderer.invoke("jdc:mpv:setNavigation", navigation),
+  beginTrickplay: (metadata) => ipcRenderer.invoke("jdc:mpv:trickplay:begin", metadata),
+  appendTrickplay: (id, chunk) =>
+    ipcRenderer.invoke("jdc:mpv:trickplay:append", id, chunk),
+  commitTrickplay: (id) => ipcRenderer.invoke("jdc:mpv:trickplay:commit", id),
+  abortTrickplay: (id) => ipcRenderer.invoke("jdc:mpv:trickplay:abort", id),
+  clearTrickplay: () => ipcRenderer.invoke("jdc:mpv:trickplay:clear"),
   setFullscreen: (fullscreen) =>
     ipcRenderer.invoke("jdc:mpv:setFullscreen", fullscreen),
   resolveSeriesTracks: (context) =>

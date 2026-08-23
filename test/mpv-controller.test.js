@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
 const {
   MpvController,
   buildMpvArguments,
@@ -135,12 +136,31 @@ test("forwards Jellyfin controls and native track changes from MPV", () => {
   ]);
 });
 
+test("forwards bounded trickplay window requests from the Lua provider", () => {
+  const events = [];
+  const controller = new MpvController({
+    serverUrl: "https://media.example",
+    eventSink: (name, payload) => events.push({ name, payload }),
+  });
+
+  controller.onMessage({
+    event: "client-message",
+    args: ["shim-trickplay-need", "123.5"],
+  });
+  controller.onMessage({
+    event: "client-message",
+    args: ["shim-trickplay-need", "not-a-number"],
+  });
+
+  assert.deepEqual(events, [{ name: "trickplayNeed", payload: { seconds: 123.5 } }]);
+});
+
 test("adds the Jellyfin OSC preset without discarding other MPV script options", () => {
   const args = buildMpvArguments("test-ipc", "jellyfin", "jellyfin_dc.lua");
 
   assert.ok(args.includes("--force-window=immediate"));
   assert.ok(!args.includes("--force-window=no"));
-  assert.ok(args.includes("--osc=yes"));
+  assert.ok(args.includes("--osc=no"));
   assert.ok(args.includes("--osd-on-seek=msg-bar"));
   assert.ok(
     args.some((argument) => argument.startsWith("--script-opts-append=osc-layout=")),
@@ -155,6 +175,8 @@ test("adds the Jellyfin OSC preset without discarding other MPV script options",
     8,
   );
   assert.ok(!args.some((argument) => argument.startsWith("--script-opts=")));
+  assert.ok(args.includes(`--script=${path.join(".", "thumbfast.lua")}`));
+  assert.ok(args.includes(`--script=${path.join(".", "trickplay-osc.lua")}`));
   assert.ok(args.includes("--script=jellyfin_dc.lua"));
 });
 
@@ -165,7 +187,9 @@ test("uses a dedicated mpv.net process profile while retaining Noktus controls",
   assert.ok(!args.includes("--force-window=immediate"));
   assert.ok(!args.includes("--no-terminal"));
   assert.ok(args.includes("--input-ipc-server=test-ipc"));
-  assert.ok(args.includes("--osc=yes"));
+  assert.ok(args.includes("--osc=no"));
+  assert.ok(args.some((argument) => argument.endsWith("thumbfast.lua")));
+  assert.ok(args.some((argument) => argument.endsWith("trickplay-osc.lua")));
   assert.ok(args.includes("--script=jellyfin_dc.lua"));
   assert.equal(
     new MpvController({
@@ -187,7 +211,7 @@ test("applies one named video profile before Noktus mandatory arguments", () => 
   const profileIndex = args.indexOf("--profile=high-quality");
   assert.ok(profileIndex >= 0);
   assert.ok(profileIndex < args.indexOf("--input-ipc-server=test-ipc"));
-  assert.ok(profileIndex < args.indexOf("--osc=yes"));
+  assert.ok(profileIndex < args.indexOf("--osc=no"));
   assert.throws(
     () => buildMpvArguments("test-ipc", "jellyfin", null, "mpv", "one,two"),
     /unsupported/,
@@ -314,6 +338,8 @@ test("lets user MPV configuration own the presentation", () => {
   const args = buildMpvArguments("test-ipc", "user");
 
   assert.ok(!args.includes("--osc=yes"));
+  assert.ok(!args.includes("--osc=no"));
+  assert.ok(!args.some((argument) => argument.endsWith("thumbfast.lua")));
   assert.ok(!args.some((argument) => argument.startsWith("--script-opts")));
   assert.equal(normalizeMpvPresentation("USER"), "user");
   assert.throws(() => normalizeMpvPresentation("overlay"), /mpv-ui/);
