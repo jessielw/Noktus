@@ -10,6 +10,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 - Bounded Jellyfin trickplay thumbnail previews for the Noktus MPV controls preset
+- Discord rich presence (can opt out in settings)
 
 ### Fixed
 
