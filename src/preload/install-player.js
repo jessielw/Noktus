@@ -350,6 +350,69 @@ function installPlayer(config) {
     return "";
   }
 
+  function isWithinConfiguredServer(rawUrl) {
+    try {
+      const candidate = new URL(rawUrl);
+      if (candidate.origin !== server.origin) return false;
+      return (
+        !basePath ||
+        candidate.pathname === basePath ||
+        candidate.pathname.startsWith(`${basePath}/`)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function mpvPlaybackUrl(options) {
+    const rawUrl = options?.url;
+    if (typeof rawUrl !== "string" || !rawUrl) {
+      throw new Error("Jellyfin did not provide a media URL");
+    }
+    if (isWithinConfiguredServer(rawUrl)) return rawUrl;
+
+    let remoteUrl;
+    try {
+      remoteUrl = new URL(rawUrl);
+    } catch {
+      throw new Error("Jellyfin provided an invalid remote media URL");
+    }
+    if (!["http:", "https:"].includes(remoteUrl.protocol)) {
+      throw new Error("Remote media must use HTTP or HTTPS");
+    }
+
+    const itemId = String(options.item?.Id || "");
+    const mediaSource = options.mediaSource || {};
+    const mediaSourceId = String(mediaSource.Id || "");
+    if (
+      String(mediaSource.Protocol || "").toLowerCase() !== "http" ||
+      mediaSource.SupportsDirectStream !== true
+    ) {
+      throw new Error("The remote media source cannot be streamed through Jellyfin");
+    }
+    if (!itemId || !mediaSourceId) {
+      throw new Error("The remote media source is missing its Jellyfin identifiers");
+    }
+
+    const apiClient = apiClientFor(options.item);
+    const accessToken = apiClientValue(apiClient, ["accessToken"]);
+    if (!accessToken) {
+      throw new Error("The remote media source cannot be authenticated with Jellyfin");
+    }
+
+    const url = new URL(server.href);
+    url.pathname = `${basePath}/Videos/${encodeURIComponent(itemId)}/stream`;
+    url.search = "";
+    url.hash = "";
+    url.searchParams.set("static", "true");
+    url.searchParams.set("MediaSourceId", mediaSourceId);
+    url.searchParams.set("ApiKey", accessToken);
+    if (mediaSource.LiveStreamId != null && mediaSource.LiveStreamId !== "") {
+      url.searchParams.set("LiveStreamId", String(mediaSource.LiveStreamId));
+    }
+    return url.href;
+  }
+
   function authorizationValue(value) {
     return encodeURIComponent(String(value)).replace(
       /[!'()*]/g,
@@ -1175,7 +1238,7 @@ function installPlayer(config) {
         this._fullscreen = status.startFullscreen ?? state.startFullscreen;
         this._managedMpvPresentation = status.presentation === "jellyfin";
         this._loadRequest = {
-          url: options.url,
+          url: mpvPlaybackUrl(options),
           startSeconds: this._currentTime / 1000,
           title: playbackTitle(options),
           fullscreen: this._fullscreen,

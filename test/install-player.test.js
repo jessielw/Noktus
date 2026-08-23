@@ -278,6 +278,134 @@ test("passes authenticated Jellyfin MediaSegments to native playback", async (t)
   listeners.get("ended")?.({});
 });
 
+test("routes remote HTTP media through Jellyfin for MPV playback", async (t) => {
+  const listeners = new Map();
+  const loads = [];
+  const bridge = {
+    status: async () => ({ backend: "mpv", startFullscreen: false }),
+    on: (name, callback) => listeners.set(name, callback),
+    load: async (request) => {
+      loads.push(request);
+      return true;
+    },
+    openExternal: async () => true,
+  };
+  global.location = new URL("https://media.example/jellyfin/web/");
+  global.window = {
+    jellyfinDesktop: bridge,
+    ApiClient: {
+      accessToken: () => "token with spaces",
+      async getJSON() {
+        return { Items: [] };
+      },
+      getUrl(path) {
+        return `https://media.example/jellyfin/${path}`;
+      },
+    },
+  };
+  global.document = { getElementById: () => null };
+  t.after(() => {
+    delete global.document;
+    delete global.location;
+    delete global.window;
+  });
+
+  installPlayer({
+    serverUrl: "https://media.example/jellyfin",
+    backend: "mpv",
+    appName: "Noktus",
+    appVersion: "test",
+    deviceName: "test",
+  });
+  const Player = await global.window.jellyfinDcMpvPlayer();
+  const player = new Player({
+    events: { trigger() {} },
+    appSettings: { get: () => 1, set() {} },
+    playbackManager: { syncPlayEnabled: false },
+  });
+
+  await player.play({
+    url: "https://streams.example/watch/movie.mkv?remote_token=secret",
+    item: {
+      Id: "movie/id",
+      MediaType: "Video",
+      RunTimeTicks: 120000000,
+      Type: "Movie",
+    },
+    mediaSource: {
+      Id: "source & id",
+      Protocol: "Http",
+      SupportsDirectStream: true,
+      LiveStreamId: "live/id",
+      MediaStreams: [],
+    },
+  });
+
+  assert.equal(loads.length, 1);
+  const url = new URL(loads[0].url);
+  assert.equal(url.origin, "https://media.example");
+  assert.equal(url.pathname, "/jellyfin/Videos/movie%2Fid/stream");
+  assert.equal(url.searchParams.get("static"), "true");
+  assert.equal(url.searchParams.get("MediaSourceId"), "source & id");
+  assert.equal(url.searchParams.get("ApiKey"), "token with spaces");
+  assert.equal(url.searchParams.get("LiveStreamId"), "live/id");
+  assert.equal(loads[0].url.includes("streams.example"), false);
+  assert.equal(loads[0].url.includes("remote_token"), false);
+  listeners.get("ended")?.({});
+});
+
+test("leaves Jellyfin-hosted MPV media URLs unchanged", async (t) => {
+  const listeners = new Map();
+  const loads = [];
+  const bridge = {
+    status: async () => ({ backend: "mpv", startFullscreen: false }),
+    on: (name, callback) => listeners.set(name, callback),
+    load: async (request) => {
+      loads.push(request);
+      return true;
+    },
+    openExternal: async () => true,
+  };
+  global.location = new URL("https://media.example/jellyfin/web/");
+  global.window = { jellyfinDesktop: bridge };
+  global.document = { getElementById: () => null };
+  t.after(() => {
+    delete global.document;
+    delete global.location;
+    delete global.window;
+  });
+
+  installPlayer({
+    serverUrl: "https://media.example/jellyfin",
+    backend: "mpv",
+    appName: "Noktus",
+    appVersion: "test",
+    deviceName: "test",
+  });
+  const Player = await global.window.jellyfinDcMpvPlayer();
+  const player = new Player({
+    events: { trigger() {} },
+    appSettings: { get: () => 1, set() {} },
+    playbackManager: { syncPlayEnabled: false },
+  });
+  const original =
+    "https://media.example/jellyfin/Videos/movie-id/stream?api_key=secret";
+
+  await player.play({
+    url: original,
+    item: {
+      Id: "movie-id",
+      MediaType: "Video",
+      RunTimeTicks: 120000000,
+      Type: "Movie",
+    },
+    mediaSource: { MediaStreams: [] },
+  });
+
+  assert.equal(loads[0].url, original);
+  listeners.get("ended")?.({});
+});
+
 test("decodes Jellyfin trickplay tiles into bounded BGRA windows", async (t) => {
   const listeners = new Map();
   const appended = [];
