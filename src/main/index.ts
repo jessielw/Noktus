@@ -25,6 +25,7 @@ import {
   supportsRuntimeTarget,
 } from "../shared/compatibility";
 import { createDiagnosticsReport, type NoktusDiagnostics } from "./diagnostics";
+import { shouldGrantFullscreenPermission } from "./fullscreen-permission";
 import { PresenceCoordinator } from "./presence/coordinator";
 import { DiscordIpcProvider } from "./presence/discord-ipc";
 import { normalizePresenceActivity } from "./presence/types";
@@ -2183,6 +2184,38 @@ function registerIpc(): void {
     },
   );
   ipcMain.handle(
+    "jdc:mpv:trickplay:begin",
+    (event: IpcMainInvokeEvent, metadata: unknown) => {
+      assertTrustedSender(event);
+      return createMpvController().beginTrickplay(metadata);
+    },
+  );
+  ipcMain.handle(
+    "jdc:mpv:trickplay:append",
+    (event: IpcMainInvokeEvent, id: unknown, chunk: unknown) => {
+      assertTrustedSender(event);
+      return createMpvController().appendTrickplay(id, chunk);
+    },
+  );
+  ipcMain.handle(
+    "jdc:mpv:trickplay:commit",
+    (event: IpcMainInvokeEvent, id: unknown) => {
+      assertTrustedSender(event);
+      return createMpvController().commitTrickplay(id);
+    },
+  );
+  ipcMain.handle(
+    "jdc:mpv:trickplay:abort",
+    (event: IpcMainInvokeEvent, id: unknown) => {
+      assertTrustedSender(event);
+      return createMpvController().abortTrickplay(id);
+    },
+  );
+  ipcMain.handle("jdc:mpv:trickplay:clear", (event: IpcMainInvokeEvent) => {
+    assertTrustedSender(event);
+    return createMpvController().clearTrickplay();
+  });
+  ipcMain.handle(
     "jdc:open-external",
     async (event: IpcMainInvokeEvent, rawUrl: unknown) => {
       assertTrustedSender(event);
@@ -2805,9 +2838,40 @@ if (isPrimaryInstance) {
 app.whenReady().then(async () => {
   if (!isPrimaryInstance) return;
   initializeRuntime();
+  const grantFullscreenPermission = (
+    requestingWebContentsId: number | null,
+    permission: string,
+    requestingUrl: string,
+    isMainFrame: boolean,
+  ): boolean =>
+    shouldGrantFullscreenPermission({
+      permission,
+      requestingUrl,
+      isMainFrame,
+      requestingWebContentsId,
+      mainWindowWebContentsId:
+        mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null,
+      serverUrl,
+    });
+  session.defaultSession.setPermissionCheckHandler(
+    (webContents, permission, requestingOrigin, details) =>
+      grantFullscreenPermission(
+        webContents?.id ?? null,
+        permission,
+        details.requestingUrl || requestingOrigin,
+        details.isMainFrame,
+      ),
+  );
   session.defaultSession.setPermissionRequestHandler(
-    (_webContents, _permission, callback) => {
-      callback(false);
+    (webContents, permission, callback, details) => {
+      callback(
+        grantFullscreenPermission(
+          webContents.id,
+          permission,
+          details.requestingUrl,
+          details.isMainFrame,
+        ),
+      );
     },
   );
   registerIpc();
