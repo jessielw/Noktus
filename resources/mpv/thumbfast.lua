@@ -78,6 +78,9 @@ local function receive_window(args)
     image.last_frame = -1
     image.enabled = true
     publish_info()
+    mp.msg.verbose(string.format(
+        "Noktus trickplay window: %d frames [%d,%d) of %d at %dx%d from %s",
+        count, first, first + count, total, width, height, file))
 end
 
 local function show_thumbnail(args)
@@ -93,6 +96,7 @@ local function show_thumbnail(args)
     if frame < 0 or frame >= image.count then
         if image.asked ~= video_frame then
             image.asked = video_frame
+            mp.msg.verbose("Noktus trickplay frame " .. video_frame .. " is outside the window")
             mp.commandv("script-message", "shim-trickplay-need", tostring(seconds))
         end
         remove_overlay()

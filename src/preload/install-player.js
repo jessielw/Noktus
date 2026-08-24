@@ -155,6 +155,24 @@ function installPlayer(config) {
     }
     return Promise.resolve(bridge[method](...args));
   };
+
+  // Trickplay used to fail silently, which made "where are my thumbnails?" reports
+  // impossible to triage. Every outcome is reported once per playback instead.
+  let lastTrickplayReport = null;
+  function resetTrickplayReport() {
+    lastTrickplayReport = null;
+  }
+  function reportTrickplay(state, detail) {
+    if (typeof bridge?.reportTrickplay !== "function") return;
+    const message = String(detail || "");
+    const line = `${state}|${message}`;
+    if (line === lastTrickplayReport) return;
+    lastTrickplayReport = line;
+    invoke("reportTrickplay", { state, detail: message }).catch(() => {});
+  }
+  function describeError(error) {
+    return error?.message || String(error);
+  }
   bridge.on("shutdown", (payload) => {
     const requestId = payload?.requestId;
     if (typeof requestId !== "string" || !requestId) return;
@@ -615,7 +633,7 @@ function installPlayer(config) {
     }
   }
 
-  function normalizeTrickplayManifest(value, itemId, mediaSourceId) {
+  function normalizeTrickplayManifest(value, itemId, mediaSourceId, rejected = []) {
     const trickplay = value?.Trickplay;
     if (!trickplay || typeof trickplay !== "object") return null;
 
@@ -674,6 +692,7 @@ function installPlayer(config) {
           width * height * 4 > TRICKPLAY_WINDOW_BYTES ||
           width * tileWidth * height * tileHeight * 4 > TRICKPLAY_MAX_TILE_BYTES
         ) {
+          rejected.push(`${candidate?.Width ?? key}x${candidate?.Height ?? "?"}`);
           return null;
         }
         return {
@@ -688,33 +707,50 @@ function installPlayer(config) {
         };
       })
       .filter(Boolean)
-      .sort((left, right) => left.width - right.width);
+      // Sharpest tier that still fits the window budget checked above.
+      .sort((left, right) => right.width - left.width);
     return resolutions[0] || null;
   }
 
-  async function fetchTrickplayManifest(item, mediaSource) {
+  async function fetchTrickplayManifest(item, mediaSource, rejected = []) {
     const itemId = String(item?.Id || "");
     if (!itemId) return null;
     const mediaSourceId = String(mediaSource?.Id || "");
     const apiClient = apiClientFor(item);
     if (!apiClient) return null;
 
-    let source = item;
-    let manifest = normalizeTrickplayManifest(source, itemId, mediaSourceId);
+    const manifest = normalizeTrickplayManifest(item, itemId, mediaSourceId, rejected);
     if (manifest) return { ...manifest, apiClient };
 
     const userId = await currentUserId(item);
     if (!userId) return null;
-    const itemPath = `Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}`;
-    const rawUrl =
-      typeof apiClient.getUrl === "function"
-        ? apiClient.getUrl(itemPath)
-        : new URL(`${basePath}/${itemPath}`, server).href;
-    const url = new URL(rawUrl, location.href);
-    url.searchParams.set("Fields", "Trickplay");
-    source = await apiJson(apiClient, url);
-    manifest = normalizeTrickplayManifest(source, itemId, mediaSourceId);
-    return manifest ? { ...manifest, apiClient } : null;
+    // Both routes ignore `Fields` on newer servers and honour it on older ones, and
+    // the `Users/...` form is deprecated, so try the current route first and fall back.
+    const itemPaths = [
+      `Items/${encodeURIComponent(itemId)}`,
+      `Users/${encodeURIComponent(userId)}/Items/${encodeURIComponent(itemId)}`,
+    ];
+    let lastError = null;
+    for (const itemPath of itemPaths) {
+      const rawUrl =
+        typeof apiClient.getUrl === "function"
+          ? apiClient.getUrl(itemPath)
+          : new URL(`${basePath}/${itemPath}`, server).href;
+      const url = new URL(rawUrl, location.href);
+      url.searchParams.set("Fields", "Trickplay");
+      if (itemPath.startsWith("Items/")) url.searchParams.set("userId", userId);
+      let source;
+      try {
+        source = await apiJson(apiClient, url);
+      } catch (error) {
+        lastError = error;
+        continue;
+      }
+      const found = normalizeTrickplayManifest(source, itemId, mediaSourceId, rejected);
+      if (found) return { ...found, apiClient };
+    }
+    if (lastError) throw lastError;
+    return null;
   }
 
   function trickplayWindow(manifest, seconds) {
@@ -1114,7 +1150,7 @@ function installPlayer(config) {
       this._navigationTimer = null;
       this._navigation = { previous: false, next: false };
       this._trickplay = null;
-      this._managedMpvPresentation = false;
+      this._trickplaySupported = false;
       this._wireBridge();
       if (typeof this.events?.on === "function") {
         for (const eventName of [
@@ -1236,7 +1272,8 @@ function installPlayer(config) {
         this._seriesTrackContext = seriesSelection.context;
         const status = await invoke("status");
         this._fullscreen = status.startFullscreen ?? state.startFullscreen;
-        this._managedMpvPresentation = status.presentation === "jellyfin";
+        this._trickplaySupported =
+          status.presentation === "jellyfin" && status.provider !== "mpv.net";
         this._loadRequest = {
           url: mpvPlaybackUrl(options),
           startSeconds: this._currentTime / 1000,
@@ -1249,11 +1286,24 @@ function installPlayer(config) {
           }),
         };
         await invoke("load", this._loadRequest);
-        if (
-          this._managedMpvPresentation &&
-          typeof bridge.beginTrickplay === "function"
-        ) {
-          this._initializeTrickplay(options, playGeneration, this._currentTime / 1000);
+        if (typeof bridge.beginTrickplay === "function") {
+          if (this._trickplaySupported) {
+            this._initializeTrickplay(
+              options,
+              playGeneration,
+              this._currentTime / 1000,
+            );
+          } else if (status.provider === "mpv.net") {
+            reportTrickplay(
+              "unsupported",
+              "mpv.net draws its own on-screen controller, so Noktus cannot add trickplay previews there.",
+            );
+          } else {
+            reportTrickplay(
+              "off",
+              "Controls are set to your own MPV configuration, which keeps its own OSC and thumbnail scripts.",
+            );
+          }
         }
         this._scheduleNavigationRefresh(options, playGeneration);
         segmentsPromise
@@ -1329,6 +1379,7 @@ function installPlayer(config) {
     }
 
     async _initializeTrickplay(options, playGeneration, seconds) {
+      resetTrickplayReport();
       const trickplay = {
         playGeneration,
         manifest: null,
@@ -1337,10 +1388,12 @@ function installPlayer(config) {
         loading: false,
       };
       this._trickplay = trickplay;
+      const rejected = [];
       try {
         const manifest = await fetchTrickplayManifest(
           options.item,
           options.mediaSource,
+          rejected,
         );
         if (
           this._trickplay !== trickplay ||
@@ -1352,13 +1405,22 @@ function installPlayer(config) {
         }
         if (!manifest) {
           this._trickplay = null;
+          reportTrickplay(
+            rejected.length ? "error" : "no-manifest",
+            rejected.length
+              ? `Noktus cannot use the trickplay sizes this server offers (${rejected.join(", ")}).`
+              : "This server has no trickplay images for the item that was played.",
+          );
           return;
         }
         trickplay.manifest = manifest;
         this._pumpTrickplay(trickplay);
       } catch (error) {
         if (this._trickplay === trickplay) this._trickplay = null;
-        console.debug("[Noktus] Trickplay metadata unavailable:", error);
+        reportTrickplay(
+          "error",
+          `Trickplay metadata is unavailable: ${describeError(error)}`,
+        );
       }
     }
 
@@ -1396,10 +1458,20 @@ function installPlayer(config) {
               seconds,
               isCurrent,
             );
-            if (loaded && isCurrent()) trickplay.window = loaded;
+            if (loaded && isCurrent()) {
+              trickplay.window = loaded;
+              const { thumbnailCount, width, height } = trickplay.manifest;
+              reportTrickplay(
+                "ready",
+                `${thumbnailCount} previews at ${width}x${height}.`,
+              );
+            }
           } catch (error) {
             if (isCurrent()) {
-              console.debug("[Noktus] Could not load trickplay thumbnails:", error);
+              reportTrickplay(
+                "error",
+                `Could not load trickplay thumbnails: ${describeError(error)}`,
+              );
             }
             break;
           }
@@ -1522,7 +1594,7 @@ function installPlayer(config) {
       this._failurePending = false;
       this._loadRequest.startSeconds = this._currentTime / 1000;
       await invoke("load", this._loadRequest);
-      if (this._managedMpvPresentation) {
+      if (this._trickplaySupported) {
         this._initializeTrickplay(
           this._options,
           this._playGeneration,

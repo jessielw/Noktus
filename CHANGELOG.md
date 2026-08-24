@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- mpv.net lost its on-screen controller and seekbar under the Noktus controls preset
+- mpv.net now loads every Noktus script, not just the last one passed to it
+- Trickplay metadata is read from the current Jellyfin item route, not the deprecated
+  one
+- Thumbnail overlays are cleared when MPV's OSC visibility is set to `never`
+- The controls preset no longer sends `osc-fadein`, which MPV logged as an unknown
+  option
+- MPV keybinds and menu entries for `osc/visibility` work again under the controls
+  preset
+
+### Changed
+
+- mpv.net keeps its own on-screen controller, so trickplay previews are MPV only
+- Trickplay previews use the sharpest thumbnail size that fits, instead of the smallest
+- Settings shows whether the last MPV playback got trickplay previews, and why not
+
 ## [0.1.6] - 2026-08-23
 
 ### Fixed

@@ -17,6 +17,7 @@ const testMpv = document.getElementById("test-mpv");
 const mpvDiagnostic = document.getElementById("mpv-diagnostic");
 const mpvDiagnosticTitle = document.getElementById("mpv-diagnostic-title");
 const mpvDiagnosticDetail = document.getElementById("mpv-diagnostic-detail");
+const mpvTrickplay = document.getElementById("mpv-trickplay");
 const cancel = document.getElementById("cancel");
 const save = document.getElementById("save");
 const status = document.getElementById("status");
@@ -98,6 +99,27 @@ function renderMpvDiagnostic(diagnostic) {
     : `${source}. ${diagnostic.reason}`;
 }
 
+// Reported by the injected player after the last MPV playback, so users can tell
+// "the server has no thumbnails" apart from "Noktus could not load them".
+const TRICKPLAY_LABELS = {
+  off: "Trickplay previews are off while Controls uses your own MPV configuration.",
+  unsupported: "Trickplay previews are not available on mpv.net.",
+  "no-manifest": "No trickplay previews: the server had none for the last item played.",
+  error: "Trickplay previews failed on the last item played.",
+  ready: "Trickplay previews loaded for the last item played.",
+};
+
+function renderTrickplay(trickplay) {
+  const label = trickplay && TRICKPLAY_LABELS[trickplay.state];
+  if (!label) {
+    mpvTrickplay.hidden = true;
+    mpvTrickplay.textContent = "";
+    return;
+  }
+  mpvTrickplay.hidden = false;
+  mpvTrickplay.textContent = trickplay.detail ? `${label} ${trickplay.detail}` : label;
+}
+
 async function initialize() {
   try {
     const settings = await window.settingsApi.load();
@@ -109,6 +131,7 @@ async function initialize() {
     mpvProfile.value = settings.mpvProfile || "";
     mpvFullscreen.checked = settings.startMpvFullscreen;
     renderMpvDiagnostic(settings.mpvDiagnostic);
+    renderTrickplay(settings.trickplay);
     version.textContent = `Noktus ${settings.appVersion}`;
     updateMpvState();
     playbackMode.focus();

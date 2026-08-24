@@ -172,25 +172,33 @@ test("adds the Jellyfin OSC preset without discarding other MPV script options",
   );
   assert.equal(
     args.filter((argument) => argument.startsWith("--script-opts-append=")).length,
-    8,
+    7,
   );
+  // `osc-fadein` postdates the OSC revision this fork is based on; passing it only
+  // produced a "script-opts: unknown key fadein" warning on every launch.
+  assert.ok(!args.some((argument) => argument.includes("osc-fadein")));
   assert.ok(!args.some((argument) => argument.startsWith("--script-opts=")));
   assert.ok(args.includes(`--script=${path.join(".", "thumbfast.lua")}`));
-  assert.ok(args.includes(`--script=${path.join(".", "trickplay-osc.lua")}`));
+  assert.ok(args.includes(`--script=${path.join(".", "osc.lua")}`));
   assert.ok(args.includes("--script=jellyfin_dc.lua"));
 });
 
-test("uses a dedicated mpv.net process profile while retaining Noktus controls", () => {
+test("leaves mpv.net in charge of its own OSC and loads scripts as one list", () => {
   const args = buildMpvArguments("test-ipc", "jellyfin", "jellyfin_dc.lua", "mpv.net");
 
   assert.ok(args.includes("--process-instance=multi"));
   assert.ok(!args.includes("--force-window=immediate"));
   assert.ok(!args.includes("--no-terminal"));
   assert.ok(args.includes("--input-ipc-server=test-ipc"));
-  assert.ok(args.includes("--osc=no"));
-  assert.ok(args.some((argument) => argument.endsWith("thumbfast.lua")));
-  assert.ok(args.some((argument) => argument.endsWith("trickplay-osc.lua")));
-  assert.ok(args.includes("--script=jellyfin_dc.lua"));
+  // mpv.net cannot load our patched OSC, so replacing its own would leave no
+  // seekbar at all (jessielw/Noktus#8). Its OSC preference is left entirely alone.
+  assert.ok(!args.some((argument) => argument.startsWith("--osc=")));
+  assert.ok(!args.some((argument) => argument.includes("thumbfast.lua")));
+  assert.ok(!args.some((argument) => argument.includes("osc.lua")));
+  assert.ok(!args.some((argument) => argument.startsWith("--script-opts-append=osc-")));
+  // mpv.net replaces `scripts` on every `--script=`, so only the last one would load.
+  assert.ok(!args.some((argument) => argument.startsWith("--script=")));
+  assert.ok(args.includes("--scripts=jellyfin_dc.lua"));
   assert.equal(
     new MpvController({
       serverUrl: "https://media.example",

@@ -31,6 +31,10 @@ import { DiscordIpcProvider } from "./presence/discord-ipc";
 import { normalizePresenceActivity } from "./presence/types";
 import { installFileLogging } from "./logging";
 import { MpvController, normalizeMpvPresentation } from "./playback/mpv-controller";
+import {
+  normalizeTrickplayStatus,
+  trickplayLogLine,
+} from "./playback/trickplay-status";
 import { inspectMpvExecutable } from "./playback/mpv-diagnostics";
 import { discoverMpvProfiles } from "./playback/mpv-profiles";
 import {
@@ -105,6 +109,7 @@ import type {
   ServerManagerSnapshot,
   ServerProfile,
   SettingsSnapshot,
+  TrickplayStatus,
 } from "../shared/types";
 
 const APP_NAME = PRODUCT_IDENTITY.name;
@@ -168,6 +173,7 @@ let mpvExecutableResolution: MpvExecutableResolution = {
   ignoredConfiguredPath: null,
 };
 let mpvDiagnosticCache: Promise<MpvDiagnostic> | null = null;
+let lastTrickplayStatus: TrickplayStatus | null = null;
 let mpvIntegrationScript: string | null = null;
 let appIconPath: string | null = null;
 let mpvPresentation: MpvPresentation = "jellyfin";
@@ -782,6 +788,7 @@ async function settingsSnapshot(): Promise<SettingsSnapshot> {
     mpvPath: persistedSettings.mpvPath || "",
     mpvProfile: mpvProfile || "",
     mpvDiagnostic: await currentMpvDiagnostic(),
+    trickplay: lastTrickplayStatus,
     appVersion: app.getVersion(),
   };
 }
@@ -2215,6 +2222,18 @@ function registerIpc(): void {
     assertTrustedSender(event);
     return createMpvController().clearTrickplay();
   });
+  ipcMain.handle(
+    "jdc:mpv:trickplay:status",
+    (event: IpcMainInvokeEvent, value: unknown) => {
+      assertTrustedSender(event);
+      const status = normalizeTrickplayStatus(value);
+      lastTrickplayStatus = status;
+      const line = `${LOG_PREFIX} ${trickplayLogLine(status)}`;
+      if (status.state === "error") console.warn(line);
+      else console.info(line);
+      return true;
+    },
+  );
   ipcMain.handle(
     "jdc:open-external",
     async (event: IpcMainInvokeEvent, rawUrl: unknown) => {

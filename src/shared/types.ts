@@ -16,6 +16,15 @@ export interface MpvDiagnostic {
   configuredPathIgnored: boolean;
 }
 
+// Why the last MPV playback did or did not get trickplay previews. Reported by the
+// injected player so Settings can answer "where are my thumbnails?" without a debugger.
+export type TrickplayState = "off" | "unsupported" | "no-manifest" | "error" | "ready";
+
+export interface TrickplayStatus {
+  state: TrickplayState;
+  detail: string;
+}
+
 export interface ServerProfile {
   id: string;
   name: string;
@@ -54,6 +63,7 @@ export interface SettingsSnapshot {
   mpvPath: string;
   mpvProfile: string;
   mpvDiagnostic: MpvDiagnostic;
+  trickplay: TrickplayStatus | null;
   appVersion: string;
 }
 
@@ -223,6 +233,7 @@ export interface DesktopBridge {
   commitTrickplay(id: string): Promise<boolean>;
   abortTrickplay(id: string): Promise<boolean>;
   clearTrickplay(): Promise<boolean>;
+  reportTrickplay(status: unknown): Promise<boolean>;
   setFullscreen(fullscreen: boolean): Promise<boolean>;
   resolveSeriesTracks(context: unknown): Promise<SeriesTrackResolution>;
   rememberSeriesTracks(context: unknown): Promise<boolean>;

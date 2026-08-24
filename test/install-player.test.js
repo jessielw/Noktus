@@ -406,9 +406,13 @@ test("leaves Jellyfin-hosted MPV media URLs unchanged", async (t) => {
   listeners.get("ended")?.({});
 });
 
-test("decodes Jellyfin trickplay tiles into bounded BGRA windows", async (t) => {
+// Drives one full MPV playback with trickplay wired up. `failModernRoute` makes the
+// current /Items/{id} route 404 so the deprecated /Users/{userId}/Items/{id} fallback runs.
+async function runTrickplayPlayback(t, { failModernRoute = false } = {}) {
   const listeners = new Map();
   const appended = [];
+  const itemRequests = [];
+  const reports = [];
   let beginMetadata = null;
   let tileUrl = null;
   let tileAuthorization = null;
@@ -421,6 +425,7 @@ test("decodes Jellyfin trickplay tiles into bounded BGRA windows", async (t) => 
       backend: "mpv",
       startFullscreen: false,
       presentation: "jellyfin",
+      provider: "mpv",
     }),
     on: (name, callback) => listeners.set(name, callback),
     load: async () => true,
@@ -439,6 +444,10 @@ test("decodes Jellyfin trickplay tiles into bounded BGRA windows", async (t) => 
       return true;
     },
     abortTrickplay: async () => true,
+    reportTrickplay: async (status) => {
+      reports.push(status);
+      return true;
+    },
     openExternal: async () => true,
   };
   const apiClient = {
@@ -447,8 +456,11 @@ test("decodes Jellyfin trickplay tiles into bounded BGRA windows", async (t) => 
     getUrl: (value) => `https://media.example/jellyfin/${value}`,
     async getJSON(url) {
       if (url.includes("MediaSegments")) return { Items: [] };
-      assert.match(url, /Users\/user-id\/Items\/movie-id/);
+      itemRequests.push(url);
       assert.match(url, /Fields=Trickplay/);
+      if (failModernRoute && !url.includes("Users/user-id/Items/")) {
+        throw new Error("Jellyfin returned HTTP 404");
+      }
       return {
         Trickplay: {
           "other-source": {
@@ -537,8 +549,15 @@ test("decodes Jellyfin trickplay tiles into bounded BGRA windows", async (t) => 
     mediaSource: { Id: "source-id", MediaStreams: [] },
   });
   await committedPromise;
+  // The "ready" report is sent just after the commit resolves.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return { appended, beginMetadata, itemRequests, reports, tileAuthorization, tileUrl };
+}
 
-  assert.deepEqual(beginMetadata, {
+test("decodes Jellyfin trickplay tiles into bounded BGRA windows", async (t) => {
+  const result = await runTrickplayPlayback(t);
+
+  assert.deepEqual(result.beginMetadata, {
     count: 2,
     intervalMs: 10_000,
     width: 2,
@@ -546,13 +565,110 @@ test("decodes Jellyfin trickplay tiles into bounded BGRA windows", async (t) => 
     first: 0,
     total: 2,
   });
-  assert.match(tileUrl, /Trickplay\/2\/0\.jpg/);
-  assert.match(tileUrl, /MediaSourceId=source-id/);
-  assert.match(tileAuthorization, /Token="tile%20token"/);
+  assert.match(result.tileUrl, /Trickplay\/2\/0\.jpg/);
+  assert.match(result.tileUrl, /MediaSourceId=source-id/);
+  assert.match(result.tileAuthorization, /Token="tile%20token"/);
   assert.deepEqual(
-    appended,
+    result.appended,
     [30, 20, 10, 255, 31, 21, 11, 255, 60, 20, 40, 255, 61, 21, 41, 255],
   );
+  // The current route answers on its own, so the deprecated one is never touched.
+  assert.equal(result.itemRequests.length, 1);
+  assert.match(result.itemRequests[0], /\/Items\/movie-id\?/);
+  assert.match(result.itemRequests[0], /userId=user-id/);
+  assert.deepEqual(result.reports, [{ state: "ready", detail: "2 previews at 2x1." }]);
+});
+
+test("falls back to the deprecated user item route for trickplay metadata", async (t) => {
+  const result = await runTrickplayPlayback(t, { failModernRoute: true });
+
+  assert.equal(result.itemRequests.length, 2);
+  assert.match(result.itemRequests[0], /\/Items\/movie-id\?/);
+  assert.match(result.itemRequests[1], /Users\/user-id\/Items\/movie-id/);
+  assert.deepEqual(result.beginMetadata, {
+    count: 2,
+    intervalMs: 10_000,
+    width: 2,
+    height: 1,
+    first: 0,
+    total: 2,
+  });
+  assert.deepEqual(result.reports, [{ state: "ready", detail: "2 previews at 2x1." }]);
+});
+
+test("reports why trickplay is unavailable instead of failing silently", async (t) => {
+  const cases = [
+    {
+      status: { presentation: "jellyfin", provider: "mpv.net" },
+      expected: {
+        state: "unsupported",
+        detail:
+          "mpv.net draws its own on-screen controller, so Noktus cannot add trickplay previews there.",
+      },
+    },
+    {
+      status: { presentation: "user", provider: "mpv" },
+      expected: {
+        state: "off",
+        detail:
+          "Controls are set to your own MPV configuration, which keeps its own OSC and thumbnail scripts.",
+      },
+    },
+  ];
+
+  for (const { status, expected } of cases) {
+    const reports = [];
+    let began = false;
+    const bridge = {
+      status: async () => ({ backend: "mpv", startFullscreen: false, ...status }),
+      on() {},
+      load: async () => true,
+      beginTrickplay: async () => {
+        began = true;
+        return null;
+      },
+      reportTrickplay: async (report) => {
+        reports.push(report);
+        return true;
+      },
+      openExternal: async () => true,
+    };
+    global.location = new URL("https://media.example/jellyfin/web/");
+    global.window = { jellyfinDesktop: bridge };
+    global.document = { getElementById: () => null };
+    t.after(() => {
+      delete global.document;
+      delete global.location;
+      delete global.window;
+    });
+
+    installPlayer({
+      serverUrl: "https://media.example/jellyfin",
+      backend: "mpv",
+      appName: "Noktus",
+      appVersion: "test",
+      deviceName: "test",
+    });
+    const Player = await global.window.jellyfinDcMpvPlayer();
+    const player = new Player({
+      events: { trigger() {} },
+      appSettings: { get: () => 1, set() {} },
+      playbackManager: { syncPlayEnabled: false },
+    });
+    await player.play({
+      url: "https://media.example/jellyfin/Videos/movie-id/stream",
+      item: {
+        Id: "movie-id",
+        MediaType: "Video",
+        RunTimeTicks: 200_000_000,
+        Type: "Movie",
+      },
+      mediaSource: { Id: "source-id", MediaStreams: [] },
+    });
+
+    assert.equal(began, false, expected.state);
+    assert.deepEqual(reports, [expected]);
+  }
 });
 
 test("uses one standard MediaBrowser Authorization header for fallback API calls", async (t) => {

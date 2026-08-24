@@ -98,6 +98,7 @@ const desktopBridge: DesktopBridge = {
   commitTrickplay: (id) => ipcRenderer.invoke("jdc:mpv:trickplay:commit", id),
   abortTrickplay: (id) => ipcRenderer.invoke("jdc:mpv:trickplay:abort", id),
   clearTrickplay: () => ipcRenderer.invoke("jdc:mpv:trickplay:clear"),
+  reportTrickplay: (status) => ipcRenderer.invoke("jdc:mpv:trickplay:status", status),
   setFullscreen: (fullscreen) =>
     ipcRenderer.invoke("jdc:mpv:setFullscreen", fullscreen),
   resolveSeriesTracks: (context) =>

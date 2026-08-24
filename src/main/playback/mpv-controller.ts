@@ -38,10 +38,13 @@ const JELLYFIN_OSC_OPTIONS = [
   "osc-boxalpha=55",
   "osc-hidetimeout=1200",
   "osc-fadeduration=180",
-  "osc-fadein=yes",
   "osc-timetotal=yes",
   "osc-scalefullscreen=1.1",
 ];
+// Loaded alongside the integration script when Noktus owns the OSC. `osc.lua` is a
+// patched copy of the stock OSC, so it must keep that filename: mpv derives a script's
+// name from its file, and `script-binding osc/visibility` has to keep resolving.
+const MANAGED_OSC_SCRIPTS = ["thumbfast.lua", "osc.lua"];
 
 type MpvCommandPart = string | number | boolean;
 type MpvCommand = MpvCommandPart[];
@@ -203,6 +206,21 @@ export function normalizeMpvPresentation(value: unknown = "jellyfin"): MpvPresen
   return normalized;
 }
 
+// Trickplay previews are drawn by our patched OSC, which only mpv itself can load.
+// mpv.net renders its own OSC and drives it from its menu, so it keeps that instead.
+export function supportsManagedOsc(provider: MpvProvider): boolean {
+  return provider === "mpv";
+}
+
+// mpv.net maps every `--script=` onto the `scripts` property and *replaces* the list
+// each time, so repeated `--script=` silently drops all but the last script. Pass a
+// single delimited list there instead (jessielw/Noktus#8).
+function scriptArguments(scripts: string[], provider: MpvProvider): string[] {
+  if (scripts.length === 0) return [];
+  if (provider !== "mpv.net") return scripts.map((script) => `--script=${script}`);
+  return [`--scripts=${scripts.join(path.delimiter)}`];
+}
+
 export function buildMpvArguments(
   ipcPath: string,
   presentation: MpvPresentation = "jellyfin",
@@ -223,22 +241,27 @@ export function buildMpvArguments(
   } else if (provider === "mpv.net") {
     args.push("--input-default-bindings=yes", "--process-instance=multi");
   }
+  const scripts: string[] = [];
   if (normalizeMpvPresentation(presentation) === "jellyfin") {
-    args.push(
-      "--osc=no",
-      "--osd-on-seek=msg-bar",
-      "--osd-duration=1800",
-      ...JELLYFIN_OSC_OPTIONS.map((option) => `--script-opts-append=${option}`),
-    );
-    if (integrationScript) {
-      const scriptDirectory = path.dirname(integrationScript);
+    args.push("--osd-on-seek=msg-bar", "--osd-duration=1800");
+    if (supportsManagedOsc(provider)) {
       args.push(
-        `--script=${path.join(scriptDirectory, "thumbfast.lua")}`,
-        `--script=${path.join(scriptDirectory, "trickplay-osc.lua")}`,
+        "--osc=no",
+        ...JELLYFIN_OSC_OPTIONS.map((option) => `--script-opts-append=${option}`),
       );
+      if (integrationScript) {
+        const scriptDirectory = path.dirname(integrationScript);
+        for (const name of MANAGED_OSC_SCRIPTS) {
+          scripts.push(path.join(scriptDirectory, name));
+        }
+      }
     }
+    // Nothing is pushed for other providers on purpose: mpv.net enables its own OSC,
+    // and forcing `--osc=yes` would stack the built-in OSC on top of a replacement
+    // like uosc for anyone who deliberately set `osc=no`.
   }
-  if (integrationScript) args.push(`--script=${integrationScript}`);
+  if (integrationScript) scripts.push(integrationScript);
+  args.push(...scriptArguments(scripts, provider));
   return args;
 }
 
@@ -408,6 +431,11 @@ export class MpvController {
     return Boolean(this.child && this.socket && this.child.exitCode == null);
   }
 
+  // True when Noktus supplies the OSC, which is also what makes trickplay possible.
+  get managedOsc(): boolean {
+    return this.presentation === "jellyfin" && supportsManagedOsc(this.provider);
+  }
+
   status(): MpvStatus {
     return {
       backend: "mpv",
@@ -453,8 +481,8 @@ export class MpvController {
     if (this.integrationScript && !fs.existsSync(this.integrationScript)) {
       throw new Error(`MPV integration script is missing: ${this.integrationScript}`);
     }
-    if (this.presentation === "jellyfin" && this.integrationScript) {
-      for (const name of ["thumbfast.lua", "trickplay-osc.lua"]) {
+    if (this.managedOsc && this.integrationScript) {
+      for (const name of MANAGED_OSC_SCRIPTS) {
         const scriptPath = path.join(path.dirname(this.integrationScript), name);
         if (!fs.existsSync(scriptPath)) {
           throw new Error(`MPV trickplay script is missing: ${scriptPath}`);
@@ -976,7 +1004,7 @@ export class MpvController {
   }
 
   beginTrickplay(value: unknown): Promise<string | null> {
-    if (this.presentation !== "jellyfin" || !this.current) {
+    if (!this.managedOsc || !this.current) {
       return Promise.resolve(null);
     }
     return this.trickplay.begin(value);

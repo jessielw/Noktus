@@ -2923,9 +2923,7 @@ function visibility_mode(mode, no_osd)
     elseif mode == "never" then
         enable_osc(false)
         -- BEGIN patch add thumbnails
-        if img_is_shown then
-            mp.commandv("overlay-remove", 46)
-        end
+        thumbfast_clear()
         -- END patch add thumbnails
     else
         msg.warn("Ignoring unknown visibility mode '" .. mode .. "'")
