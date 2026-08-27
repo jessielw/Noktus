@@ -145,6 +145,8 @@ export function installFileLogging(directory: string): InstalledFileLogging {
   const logger = new RotatingFileLogger(directory);
   const original = {
     log: console.log.bind(console),
+    info: console.info.bind(console),
+    debug: console.debug.bind(console),
     warn: console.warn.bind(console),
     error: console.error.bind(console),
   };
@@ -164,6 +166,12 @@ export function installFileLogging(directory: string): InstalledFileLogging {
     };
 
   console.log = install("INFO", original.log);
+  // `info` and `debug` are their own properties on Node's console rather than
+  // wrappers around `log`, so replacing `log` alone left them writing to stdout
+  // only. Trickplay reported every non-error outcome through `console.info`,
+  // which is why bug reports arrived with logs that never mentioned trickplay.
+  console.info = install("INFO", original.info);
+  console.debug = install("INFO", original.debug);
   console.warn = install("WARN", original.warn);
   console.error = install("ERROR", original.error);
   console.log("[Noktus] Local logging started");

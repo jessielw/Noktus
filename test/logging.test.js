@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   formatLogValues,
+  installFileLogging,
   redactSensitive,
   RotatingFileLogger,
 } = require("../build/main/logging");
@@ -78,4 +79,29 @@ test("rotates bounded log files and never writes secrets", (t) => {
   assert.ok(files.length <= 3);
   assert.match(contents, /\[REDACTED\]/);
   assert.ok(!contents.includes("secret-"));
+});
+
+test("file logging captures console.info and console.debug, not just console.log", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "noktus-logs-"));
+  const original = {
+    log: console.log,
+    info: console.info,
+    debug: console.debug,
+    warn: console.warn,
+    error: console.error,
+  };
+  t.after(() => {
+    Object.assign(console, original);
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  const { filePath } = installFileLogging(directory);
+  console.info("[Noktus] Trickplay ready: 240 previews at 320x180.");
+  console.debug("[Noktus] debug breadcrumb");
+  console.warn("[Noktus] Trickplay error: tile 3 returned HTTP 404");
+
+  const contents = fs.readFileSync(filePath, "utf8");
+  assert.match(contents, /\[INFO\] \[Noktus\] Trickplay ready: 240 previews/);
+  assert.match(contents, /\[INFO\] \[Noktus\] debug breadcrumb/);
+  assert.match(contents, /\[WARN\] \[Noktus\] Trickplay error/);
 });

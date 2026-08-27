@@ -496,6 +496,19 @@ export class MpvController {
       this.provider,
       this.profile,
     );
+    // `managedOsc` is what decides whether thumbfast.lua and osc.lua are loaded, and
+    // it is false for any executable whose name we do not recognise. Log it so a
+    // "thumbnails never appear" report can be told apart from a trickplay failure.
+    console.log(
+      "[Noktus] Starting MPV:",
+      JSON.stringify({
+        provider: this.provider,
+        executable: path.basename(this.executable),
+        presentation: this.presentation,
+        managedOsc: this.managedOsc,
+        profile: this.profile || null,
+      }),
+    );
     const child = spawn(this.executable, args, {
       shell: false,
       stdio: "ignore",
