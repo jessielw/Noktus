@@ -1,6 +1,6 @@
 export const COMPATIBILITY = {
   jellyfinWebMinor: "10.11",
-  electronVersion: "43.1.1",
+  electronVersion: "43.7.7",
   minimumMpvVersion: "0.37.0",
   targets: [
     { platform: "win32", architectures: ["x64"] },

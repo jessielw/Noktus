@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const packageJson = require("../package.json");
+const packageLock = require("../package-lock.json");
 const {
   COMPATIBILITY,
   supportsElectronVersion,
@@ -12,10 +13,20 @@ const {
 } = require("../build/shared/compatibility");
 
 test("keeps the compatibility contract aligned with the bundled runtime", () => {
+  assert.match(packageJson.devDependencies.electron, /^\d+\.\d+\.\d+$/);
   assert.equal(packageJson.devDependencies.electron, COMPATIBILITY.electronVersion);
+  assert.equal(
+    packageLock.packages[""].devDependencies.electron,
+    packageJson.devDependencies.electron,
+  );
+  assert.equal(
+    packageLock.packages["node_modules/electron"].version,
+    packageJson.devDependencies.electron,
+  );
   assert.equal(supportsElectronVersion(process.versions.electron || ""), false);
-  assert.equal(supportsElectronVersion("43.1.1"), true);
-  assert.equal(supportsElectronVersion("43.2.0"), false);
+  assert.equal(supportsElectronVersion("43.7.7"), true);
+  assert.equal(supportsElectronVersion("43.1.1"), false);
+  assert.equal(supportsElectronVersion("43.7.8"), false);
 });
 
 test("supports only the declared Jellyfin Web minor line", () => {
