@@ -43,6 +43,16 @@ jobs:
       - run: npm ci
       - run: npm run validate
       - run: npm run make:archive
+      - name: Verify macOS release archive signature
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          unpack_dir="$(mktemp -d)"
+          arch="$(node -p 'process.arch')"
+          ditto -x -k out/release/Noktus-*-macos-*.zip "$unpack_dir"
+          app="$unpack_dir/Noktus-darwin-$arch/Noktus.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign --display --verbose=4 "$app" 2>&1 | grep --fixed-strings --line-regexp 'Signature=adhoc'
       - name: Build Debian package
         if: runner.os == 'Linux'
         run: npm run make:deb

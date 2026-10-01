@@ -66,6 +66,22 @@ export async function packageNoktus() {
     electronVersion,
     platform: process.platform,
     arch: process.arch,
+    // Re-sign after Packager changes the Electron bundle. Ad-hoc signing needs
+    // no certificate, provisioning profile, hardened runtime, or timestamp.
+    osxSign:
+      process.platform === "darwin"
+        ? {
+            identity: "-",
+            identityValidation: false,
+            preAutoEntitlements: false,
+            preEmbedProvisioningProfile: false,
+            continueOnError: false,
+            optionsForFile: () => ({
+              hardenedRuntime: false,
+              timestamp: "none",
+            }),
+          }
+        : undefined,
     extraResource: [
       path.join(projectRoot, "resources", "icons"),
       path.join(projectRoot, "resources", "mpv"),

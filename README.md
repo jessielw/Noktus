@@ -97,6 +97,10 @@ Noktus uses a bundled Chromium runtime to provide consistent behavior across Win
 macOS, and Linux. This keeps the desktop experience predictable while avoiding
 platform-specific differences between system webviews.
 
+macOS packages are ad-hoc signed during packaging, including Electron's helpers and
+frameworks. These builds do not require an Apple signing certificate and are not
+notarized.
+
 ## LLM Disclosure
 
 The core of the codebase was written by me. I used a local LLM as a development aid for

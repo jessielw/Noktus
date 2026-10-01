@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-10-01
+
+### Changed
+
+- Updated several dependencies.
+
+### Fixed
+
+- macOS bundles are ad-hoc signed after packaging, with signature verification before release archives are uploaded.
+
+## [0.1.8] - 2026-08-27
+
+### Changed
+
+- Improved logging.
+
 ## [0.1.7] - 2026-08-23
 
 ### Fixed
