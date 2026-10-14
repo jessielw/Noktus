@@ -354,6 +354,23 @@ export function normalizeLoadRequest(
   };
 }
 
+// macOS caps Unix socket paths at 104 bytes including the terminating NUL (Linux at 108),
+// and its per-user os.tmpdir() under /var/folders already uses about 49 of them.
+export const MAX_UNIX_SOCKET_PATH_BYTES = 103;
+
+export function mpvIpcPath(
+  platform: NodeJS.Platform = process.platform,
+  tmpdir: string = os.tmpdir(),
+): string {
+  const name = `jellyfin-dc-electron-${process.pid}-${crypto.randomUUID().slice(0, 8)}`;
+  if (platform === "win32") return `\\\\.\\pipe\\${name}`;
+  const socketPath = path.posix.join(tmpdir, `${name}.sock`);
+  // A long custom TMPDIR can still overflow the limit, so fall back to /tmp.
+  return Buffer.byteLength(socketPath) <= MAX_UNIX_SOCKET_PATH_BYTES
+    ? socketPath
+    : path.posix.join("/tmp", `${name}.sock`);
+}
+
 function connectOnce(ipcPath: string, timeoutMs = 250): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(ipcPath);
@@ -470,13 +487,7 @@ export class MpvController {
   async start(): Promise<void> {
     this.teardownConnection();
     this.lastProcessError = null;
-    this.ipcPath =
-      process.platform === "win32"
-        ? `\\\\.\\pipe\\jellyfin-dc-electron-${process.pid}-${crypto.randomUUID()}`
-        : path.join(
-            os.tmpdir(),
-            `jellyfin-dc-electron-${process.pid}-${crypto.randomUUID()}.sock`,
-          );
+    this.ipcPath = mpvIpcPath();
 
     if (this.integrationScript && !fs.existsSync(this.integrationScript)) {
       throw new Error(`MPV integration script is missing: ${this.integrationScript}`);

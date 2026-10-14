@@ -4,11 +4,31 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const {
+  MAX_UNIX_SOCKET_PATH_BYTES,
   MpvController,
   buildMpvArguments,
+  mpvIpcPath,
   normalizeLoadRequest,
   normalizeMpvPresentation,
 } = require("../build/main/playback/mpv-controller");
+
+test("keeps the MPV IPC socket path within the macOS limit", () => {
+  const macTmpdir = "/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T/";
+  const socketPath = mpvIpcPath("darwin", macTmpdir);
+  assert.ok(socketPath.startsWith(macTmpdir));
+  assert.ok(socketPath.endsWith(".sock"));
+  assert.ok(Buffer.byteLength(socketPath) <= MAX_UNIX_SOCKET_PATH_BYTES);
+});
+
+test("falls back to /tmp when TMPDIR would overflow the socket path limit", () => {
+  const longTmpdir = `/Users/someone/${"x".repeat(80)}/tmp`;
+  const socketPath = mpvIpcPath("darwin", longTmpdir);
+  assert.match(socketPath, /^\/tmp\/jellyfin-dc-electron-\d+-[0-9a-f]{8}\.sock$/);
+});
+
+test("uses a named pipe for MPV IPC on Windows", () => {
+  assert.match(mpvIpcPath("win32"), /^\\\\\.\\pipe\\jellyfin-dc-electron-\d+-[0-9a-f]{8}$/);
+});
 
 test("normalizes a constrained MPV load request", () => {
   const request = normalizeLoadRequest(
