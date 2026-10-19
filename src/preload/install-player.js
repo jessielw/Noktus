@@ -445,7 +445,7 @@ function installPlayer(config) {
       ["Token", token],
       ["Client", config.appName || "Noktus"],
       ["Version", config.appVersion || "0.0.0"],
-      ["Device", config.deviceName || "Electron"],
+      ["Device", config.deviceName || "Noktus"],
     ];
     const deviceId = apiClientValue(apiClient, ["deviceId", "getDeviceId"]);
     if (deviceId) values.push(["DeviceId", deviceId]);

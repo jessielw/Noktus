@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { PRODUCT_IDENTITY } from "../shared/product";
 import type {
   DesktopBridge,
   MpvEventName,
@@ -136,9 +137,9 @@ try {
       {
         serverUrl,
         backend: mode,
-        appName: "Noktus",
+        appName: PRODUCT_IDENTITY.name,
         appVersion,
-        deviceName: "Electron",
+        deviceName: PRODUCT_IDENTITY.name,
       },
     ],
   });
