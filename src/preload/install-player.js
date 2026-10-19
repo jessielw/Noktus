@@ -195,7 +195,7 @@ function installPlayer(config) {
   installWebPresenceObserver();
 
   const mpvProfile = {
-    Name: "Noktus Electron MPV",
+    Name: "Noktus MPV",
     MaxStreamingBitrate: 140000000,
     MaxStaticBitrate: 140000000,
     MusicStreamingTranscodingBitrate: 1280000,
@@ -1127,7 +1127,7 @@ function installPlayer(config) {
       this.playbackManager = args.playbackManager;
       this.type = "mediaplayer";
       this.id = "jellyfindcelectronmpvplayer";
-      this.name = "Noktus Electron MPV";
+      this.name = "Noktus MPV";
       this.priority = -1;
       this.isLocalPlayer = true;
       this.isFetching = false;
