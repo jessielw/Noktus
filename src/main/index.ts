@@ -2531,7 +2531,6 @@ function switchMode(
     if (mode === "web") activeSeriesTrackContext = null;
     if (mode === "mpv" && serverUrl) createMpvController();
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setTitle(`${APP_NAME} - ${mode.toUpperCase()}`);
       mainWindow.webContents.send("jdc:mpv:event", "mode", { value: mode });
     }
     installMenu();
@@ -2728,7 +2727,7 @@ function createWindow({
     minWidth: MAIN_WINDOW_MIN_WIDTH,
     minHeight: MAIN_WINDOW_MIN_HEIGHT,
     show: false,
-    title: `${APP_NAME} - ${mode.toUpperCase()}`,
+    title: APP_NAME,
     icon: requiredPath(appIconPath, "Application icon"),
     webPreferences: {
       preload: requiredPath(preloadPath, "Main preload"),
@@ -2738,6 +2737,18 @@ function createWindow({
       sandbox: true,
       webSecurity: true,
     },
+  });
+  window.on("page-title-updated", (event, title) => {
+    event.preventDefault();
+    const pageTitle = title
+      .trim()
+      .replace(/\s+[-|–—]\s*Jellyfin$/i, "")
+      .trim();
+    window.setTitle(
+      !pageTitle || /^Jellyfin$/i.test(pageTitle)
+        ? APP_NAME
+        : `${pageTitle} — ${APP_NAME}`,
+    );
   });
   const ready = new Promise<void>((resolve, reject) => {
     let settled = false;
