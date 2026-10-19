@@ -2316,7 +2316,7 @@ async function collectCodecReport(
     if (showDialog) {
       await dialog.showMessageBox(targetWindow, {
         type: "info",
-        title: "Electron codec report",
+        title: `${APP_NAME} codec report`,
         message: "Embedded media capability report",
         detail: JSON.stringify(complete, null, 2),
       });
