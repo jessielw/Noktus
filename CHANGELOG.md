@@ -21,7 +21,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Advertise Noktus in the playback activity on Jellyfin instead of the underlying
   framework name.
 - Rename player/profile to Noktus MPV.
-- Rename dialog to Noktus codec report.
+- Identify Chromium codec reports in the menu, dialog, logs, and copied diagnostics;
+  explain capability results and clarify that MPV, hardware decoding, and actual file
+  playback are not tested.
 - Keep page titles branded with Noktus throughout.
 
 ### Fixed

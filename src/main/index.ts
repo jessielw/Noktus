@@ -116,6 +116,16 @@ import type {
 
 const APP_NAME = PRODUCT_IDENTITY.name;
 const LOG_PREFIX = `[${APP_NAME}]`;
+const CHROMIUM_CODEC_REPORT_CONTEXT = {
+  source: "chromium",
+  scope:
+    "Embedded browser capability estimates only. MPV codec support, hardware decoding, and actual file playback are not tested.",
+  resultMeaning: {
+    canPlayType:
+      '"" = unsupported; "maybe" = uncertain; "probably" = confident support (the strongest result).',
+    mse: "true = format reported as supported for Media Source Extensions; playback is not verified.",
+  },
+};
 // Discord application IDs are public. The override is useful for local testing only.
 const DISCORD_APPLICATION_ID =
   process.env.NOKTUS_DISCORD_APPLICATION_ID || "1540440229956296835";
@@ -2327,23 +2337,27 @@ async function collectCodecReport(
       codecProbeSource(),
     )) as Record<string, unknown>;
     const complete = {
-      mode,
+      ...CHROMIUM_CODEC_REPORT_CONTEXT,
+      playbackMode: mode,
       electron: process.versions.electron,
       chromium: process.versions.chrome,
       ...report,
     };
-    console.log(`${LOG_PREFIX} Codec report:`, JSON.stringify(complete, null, 2));
+    console.log(
+      `${LOG_PREFIX} Chromium codec report:`,
+      JSON.stringify(complete, null, 2),
+    );
     if (showDialog) {
       await dialog.showMessageBox(targetWindow, {
         type: "info",
-        title: `${APP_NAME} codec report`,
-        message: "Embedded media capability report",
+        title: `${APP_NAME} Chromium codec report`,
+        message: "Embedded browser codec capability estimates",
         detail: JSON.stringify(complete, null, 2),
       });
     }
     return complete;
   } catch (error: unknown) {
-    console.warn(`${LOG_PREFIX} Codec probe failed:`, errorMessage(error));
+    console.warn(`${LOG_PREFIX} Chromium codec probe failed:`, errorMessage(error));
     return null;
   }
 }
@@ -2461,6 +2475,7 @@ function diagnosticCodecReport(
 ): Record<string, unknown> | undefined {
   if (!report) return undefined;
   return {
+    ...CHROMIUM_CODEC_REPORT_CONTEXT,
     h264AacMp4: report.h264AacMp4,
     h264Mp4: report.h264Mp4,
     aac: report.aac,
@@ -2727,9 +2742,10 @@ function installMenu(): void {
         },
         { type: "separator" },
         {
-          label: "Show codec report",
+          label: "Show Chromium codec report",
           enabled: Boolean(serverUrl),
-          click: () => runMenuAction("Codec report", () => collectCodecReport(true)),
+          click: () =>
+            runMenuAction("Chromium codec report", () => collectCodecReport(true)),
         },
       ],
     },
