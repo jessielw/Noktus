@@ -1,4 +1,11 @@
-import { app, Menu, type BrowserWindow } from "electron";
+import {
+  app,
+  dialog,
+  Menu,
+  shell,
+  type BrowserWindow,
+  type MessageBoxOptions,
+} from "electron";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -30,6 +37,50 @@ export async function runDesktopSmoke(
     if (!Menu.getApplicationMenu()?.getMenuItemById(id)) {
       throw new Error(`Missing desktop menu action: ${id}`);
     }
+  }
+  if (process.platform !== "darwin") {
+    const quit = Menu.getApplicationMenu()?.getMenuItemById("noktus-quit");
+    if (quit?.role !== "quit" || quit.accelerator !== "CmdOrCtrl+Q") {
+      throw new Error("Missing standard Quit menu action or shortcut");
+    }
+  }
+  // Exercise the real menu boundary without opening a browser or blocking on a dialog.
+  const originalOpenExternal = shell.openExternal;
+  const originalShowMessageBox = dialog.showMessageBox;
+  const errorDialogs: MessageBoxOptions[] = [];
+  try {
+    dialog.showMessageBox = (async (
+      ownerOrOptions: BrowserWindow | MessageBoxOptions,
+      options?: MessageBoxOptions,
+    ) => {
+      if (ownerOrOptions !== window || !options) {
+        throw new Error("Menu error dialog must belong to the main window");
+      }
+      errorDialogs.push(options);
+      return { response: 0, checkboxChecked: false };
+    }) as typeof dialog.showMessageBox;
+    for (const synchronous of [false, true]) {
+      shell.openExternal = () => {
+        const error = new Error("Browser unavailable: ?api_key=do-not-show");
+        if (synchronous) throw error;
+        return Promise.reject(error);
+      };
+      const expectedCount = errorDialogs.length + 1;
+      Menu.getApplicationMenu()!.getMenuItemById("noktus-releases")!.click();
+      await waitFor(() => errorDialogs.length === expectedCount, "Menu error dialog");
+      const options = errorDialogs.at(-1)!;
+      if (
+        options.type !== "error" ||
+        options.message !== "View releases failed." ||
+        !options.detail?.includes("Browser unavailable") ||
+        options.detail.includes("do-not-show")
+      ) {
+        throw new Error("Menu failure did not produce a useful, redacted error dialog");
+      }
+    }
+  } finally {
+    shell.openExternal = originalOpenExternal;
+    dialog.showMessageBox = originalShowMessageBox;
   }
   // Use Jellyfin-style same-document routes, so history is tested without page reloads.
   await contents.executeJavaScript(
@@ -149,6 +200,6 @@ export async function runDesktopSmoke(
     "Empty preferences state",
   );
   console.log(
-    "[Noktus] Desktop smoke passed: history menu, keyboard and mouse navigation; Help actions; per-account series reset, validation, persistence, cancel and empty state.",
+    "[Noktus] Desktop smoke passed: history menu, keyboard and mouse navigation; Help actions, menu error dialogs and Quit action; per-account series reset, validation, persistence, cancel and empty state.",
   );
 }

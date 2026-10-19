@@ -29,7 +29,7 @@ import { shouldGrantFullscreenPermission } from "./fullscreen-permission";
 import { PresenceCoordinator } from "./presence/coordinator";
 import { DiscordIpcProvider } from "./presence/discord-ipc";
 import { normalizePresenceActivity } from "./presence/types";
-import { installFileLogging } from "./logging";
+import { installFileLogging, redactSensitive } from "./logging";
 import { MpvController, normalizeMpvPresentation } from "./playback/mpv-controller";
 import {
   normalizeTrickplayStatus,
@@ -2358,6 +2358,7 @@ async function collectCodecReport(
     return complete;
   } catch (error: unknown) {
     console.warn(`${LOG_PREFIX} Chromium codec probe failed:`, errorMessage(error));
+    if (showDialog) throw error;
     return null;
   }
 }
@@ -2372,10 +2373,28 @@ function diagnosticOwner(): BrowserWindow | undefined {
   );
 }
 
-function runMenuAction(label: string, action: () => Promise<unknown>): void {
-  void action().catch((error: unknown) => {
+async function runMenuAction(label: string, action: () => unknown): Promise<void> {
+  try {
+    await action();
+  } catch (error: unknown) {
     console.error(`${LOG_PREFIX} ${label} failed:`, errorMessage(error));
-  });
+    const options = {
+      type: "error" as const,
+      title: `${APP_NAME} action failed`,
+      message: `${label} failed.`,
+      detail: redactSensitive(errorMessage(error)),
+    };
+    try {
+      const owner = diagnosticOwner();
+      if (owner) await dialog.showMessageBox(owner, options);
+      else await dialog.showMessageBox(options);
+    } catch (dialogError: unknown) {
+      console.error(
+        `${LOG_PREFIX} Could not show menu error dialog:`,
+        errorMessage(dialogError),
+      );
+    }
+  }
 }
 
 async function showAboutDialog(): Promise<void> {
@@ -2420,12 +2439,24 @@ async function showKeyboardShortcutsDialog(): Promise<void> {
       process.platform === "darwin"
         ? "Back / forward — Command+[ / Command+]"
         : "Back / forward — Alt+Left / Alt+Right; mouse navigation buttons",
+      `Quit Noktus — ${primary}+Q`,
       "",
-      "While playing in MPV",
+      "In the MPV window (default controls)",
+      "Play / pause — Space",
+      "Seek backward / forward 5 seconds — Left / Right",
+      "Volume down / up — 9 / 0; mute — m",
+      "Toggle fullscreen — f; leave fullscreen — Esc",
+      "Cycle audio track — #; cycle subtitles — j",
+      "Show / hide subtitles — v",
+      "Playback statistics — i; toggle statistics — Shift+I",
+      "Stop playback and close MPV — q",
+      "",
+      "Noktus MPV integration",
       "Skip the active segment — Enter",
       "Skip fallback — Ctrl+Shift+I",
       "Next / previous item — > / <",
       "",
+      "Custom MPV bindings and mpv.net may use different controls.",
       "Jellyfin Web handles its own playback shortcuts.",
     ].join("\n"),
   };
@@ -2624,7 +2655,7 @@ function installMenu(): void {
         {
           label: "Settings...",
           accelerator: "CmdOrCtrl+,",
-          click: () => showSettingsWindow(),
+          click: () => runMenuAction("Open settings", showSettingsWindow),
         },
         { type: "separator" },
         {
@@ -2632,6 +2663,12 @@ function installMenu(): void {
           label: `About ${APP_NAME}`,
           click: () => runMenuAction("About dialog", showAboutDialog),
         },
+        ...(process.platform === "darwin"
+          ? []
+          : ([
+              { type: "separator" },
+              { id: "noktus-quit", role: "quit", accelerator: "CmdOrCtrl+Q" },
+            ] satisfies MenuItemConstructorOptions[])),
       ],
     },
     {
@@ -2642,7 +2679,7 @@ function installMenu(): void {
         {
           label: "Switch or add server...",
           accelerator: "CmdOrCtrl+Shift+S",
-          click: () => showServersWindow(),
+          click: () => runMenuAction("Open servers", showServersWindow),
         },
       ],
     },
@@ -2655,14 +2692,14 @@ function installMenu(): void {
           type: "radio",
           checked: currentMode === "web",
           accelerator: "CmdOrCtrl+Shift+W",
-          click: () => switchMode("web").catch(console.error),
+          click: () => runMenuAction("Switch to Web player", () => switchMode("web")),
         },
         {
           label: "MPV player",
           type: "radio",
           checked: currentMode === "mpv",
           accelerator: "CmdOrCtrl+Shift+M",
-          click: () => switchMode("mpv").catch(console.error),
+          click: () => runMenuAction("Switch to MPV player", () => switchMode("mpv")),
         },
         { type: "separator" },
         {

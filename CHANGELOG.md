@@ -15,6 +15,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Remembered series tracks in Settings, with individual resets for each server, Jellyfin
   account, and series.
 - View releases and Report an issue links in the Help menu.
+- Quit action with Ctrl+Q in the Application menu on Windows and Linux, using the
+  existing graceful playback shutdown.
 
 ### Changed
 
@@ -25,11 +27,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   explain capability results and clarify that MPV, hardware decoding, and actual file
   playback are not tested.
 - Keep page titles branded with Noktus throughout.
+- Expand keyboard shortcut help with common MPV playback, track, subtitle, and
+  statistics controls, with a note about custom bindings and mpv.net.
 
 ### Fixed
 
 - Restore saved MPV volume, including zero, before playback starts and remember volume
   adjustments made inside MPV for later sessions.
+- Show errors from menu actions in a dialog instead of only logging them.
 
 ## [0.1.10] - 2026-10-13
 
