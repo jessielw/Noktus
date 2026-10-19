@@ -131,3 +131,35 @@ test("normalizes the untrusted renderer context", () => {
     /user and series/,
   );
 });
+
+test("resets only the selected server, account, and series from Settings", () => {
+  let rules = [];
+  const contexts = [
+    context(),
+    context({ userId: "user-two" }),
+    context({ serverId: "server-two" }),
+    context({ seriesId: "series-two" }),
+  ];
+  for (const entry of contexts) rules = saveSeriesTrackRule(rules, entry);
+  const remaining = removeSeriesTrackRule(rules, {
+    serverId: "server-one",
+    userId: "user-one",
+    seriesId: "series-one",
+  });
+  assert.equal(remaining.length, 3);
+  assert.equal(findSeriesTrackRule(remaining, context()), null);
+  for (const entry of contexts.slice(1))
+    assert.ok(findSeriesTrackRule(remaining, entry));
+  for (const value of [
+    null,
+    {},
+    { serverId: "server-one" },
+    { ...context(), userId: " " },
+    { ...context(), seriesId: 1 },
+  ]) {
+    assert.throws(
+      () => removeSeriesTrackRule(rules, value),
+      /server, user, and series/,
+    );
+  }
+});

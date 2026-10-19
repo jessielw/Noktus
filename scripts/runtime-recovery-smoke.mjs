@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SMOKE_TIMEOUT_MS = 45_000;
+const desktopSmoke = process.argv.includes("--desktop");
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const userDataPath = await fs.mkdtemp(path.join(os.tmpdir(), "noktus-recovery-smoke-"));
 
@@ -49,12 +50,28 @@ if (!address || typeof address === "string") {
   throw new Error("Runtime recovery smoke server did not bind to TCP");
 }
 const serverUrl = `http://127.0.0.1:${address.port}`;
+if (desktopSmoke) {
+  await fs.writeFile(
+    path.join(userDataPath, "settings.json"),
+    JSON.stringify({
+      discordRichPresenceEnabled: false,
+      seriesTrackRules: ["user-one", "user-two"].map((userId) => ({
+        serverId: "noktus-runtime-recovery-smoke",
+        userId,
+        seriesId: "series-one",
+        seriesName: "Example Show",
+        subtitle: "off",
+        updatedAt: "2026-10-18T00:00:00.000Z",
+      })),
+    }),
+  );
+}
 const electronArguments = [
   ...(process.platform === "linux" && process.env.NOKTUS_TEST_NO_SANDBOX === "1"
     ? ["--no-sandbox"]
     : []),
   projectRoot,
-  "--smoke-runtime-recovery",
+  desktopSmoke ? "--smoke-desktop" : "--smoke-runtime-recovery",
   `--server-url=${serverUrl}`,
   `--smoke-user-data=${encodeURIComponent(userDataPath)}`,
 ];

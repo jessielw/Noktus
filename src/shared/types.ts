@@ -54,6 +54,8 @@ export interface AppSettings {
 }
 
 export interface SettingsSnapshot {
+  seriesTrackRules: SeriesTrackRule[];
+  servers: ServerProfile[];
   discordRichPresenceEnabled: boolean;
   discordPresenceConnection:
     "disabled" | "unconfigured" | "connecting" | "connected" | "unavailable";
@@ -147,6 +149,7 @@ export interface SaveServerRequest {
 }
 
 export interface MpvLoadRequest {
+  volume?: number;
   url: string;
   startSeconds: number;
   title: string;
@@ -249,6 +252,7 @@ export interface DesktopBridge {
 }
 
 export interface SettingsBridge {
+  forgetSeriesTracks(key: unknown): Promise<SeriesTrackRule[]>;
   load(): Promise<SettingsSnapshot>;
   save(settings: unknown): Promise<SettingsSnapshot>;
   browseMpv(): Promise<string | null>;

@@ -7,20 +7,35 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- Native recap and preview skip prompts when Jellyfin provides those media segments.
+- Back and forward navigation through the View menu, Alt+Left / Alt+Right (Command+[ /
+  Command+] on macOS), and mouse navigation buttons on Windows and Linux.
+- Remembered series tracks in Settings, with individual resets for each server, Jellyfin
+  account, and series.
+- View releases and Report an issue links in the Help menu.
+
 ### Changed
 
-- Advertise Noktus in the playback activity on Jellyfin instead of the underlying framework name.
+- Advertise Noktus in the playback activity on Jellyfin instead of the underlying
+  framework name.
 - Rename player/profile to Noktus MPV.
 - Rename dialog to Noktus codec report.
 - Keep page titles branded with Noktus throughout.
+
+### Fixed
+
+- Restore saved MPV volume, including zero, before playback starts and remember volume
+  adjustments made inside MPV for later sessions.
 
 ## [0.1.10] - 2026-10-13
 
 ### Fixed
 
-- MPV playback on macOS no longer fails with `connect EINVAL`. The IPC socket path
-  was longer than the 103-byte macOS limit, so it is now shorter and falls back to
-  `/tmp` when a long `TMPDIR` would push it over.
+- MPV playback on macOS no longer fails with `connect EINVAL`. The IPC socket path was
+  longer than the 103-byte macOS limit, so it is now shorter and falls back to `/tmp`
+  when a long `TMPDIR` would push it over.
 
 ## [0.1.9] - 2026-10-01
 
@@ -30,7 +45,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
-- macOS bundles are ad-hoc signed after packaging, with signature verification before release archives are uploaded.
+- macOS bundles are ad-hoc signed after packaging, with signature verification before
+  release archives are uploaded.
 
 ## [0.1.8] - 2026-08-27
 

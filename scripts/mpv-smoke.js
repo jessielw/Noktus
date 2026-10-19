@@ -62,11 +62,16 @@ async function main() {
       startSeconds: 1.25,
       title: "Noktus MPV smoke test",
       fullscreen: false,
+      volume: 0,
       audioTrack: 0,
       externalAudioUrl: null,
       subtitleStreamIndex: -1,
       subtitleTracks: [],
     });
+    const restoredVolume = await controller.command(["get_property", "volume"]);
+    if (restoredVolume !== 0) {
+      throw new Error(`MPV did not restore saved zero volume: ${restoredVolume}`);
+    }
     await controller.execute("stop");
     const fullscreenValues = events
       .filter((event) => event.name === "fullscreen")
@@ -88,6 +93,7 @@ async function main() {
     console.log("[Noktus] MPV-to-Jellyfin control messages are accepted");
     console.log("[Noktus] MPV trickplay provider messages are accepted");
     console.log("[Noktus] MPV loadfile command is accepted");
+    console.log("[Noktus] MPV restores saved zero volume before playback");
   } finally {
     if (controller.status().ready) {
       await controller.command(["quit"]).catch(() => {});

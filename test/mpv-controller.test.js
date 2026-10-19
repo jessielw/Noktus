@@ -27,7 +27,10 @@ test("falls back to /tmp when TMPDIR would overflow the socket path limit", () =
 });
 
 test("uses a named pipe for MPV IPC on Windows", () => {
-  assert.match(mpvIpcPath("win32"), /^\\\\\.\\pipe\\jellyfin-dc-electron-\d+-[0-9a-f]{8}$/);
+  assert.match(
+    mpvIpcPath("win32"),
+    /^\\\\\.\\pipe\\jellyfin-dc-electron-\d+-[0-9a-f]{8}$/,
+  );
 });
 
 test("normalizes a constrained MPV load request", () => {
@@ -75,6 +78,31 @@ test("rejects unsafe MPV input", () => {
       ),
     /startSeconds/,
   );
+});
+
+test("restores a saved zero volume before loading media", async () => {
+  const controller = new MpvController({ serverUrl: "https://media.example" });
+  const commands = [];
+  controller.ensureStarted = async () => {};
+  controller.command = async (command) => {
+    commands.push(command);
+  };
+  const request = normalizeLoadRequest(
+    { url: "https://media.example/Videos/movie/stream", volume: 0 },
+    "https://media.example",
+  );
+  await controller.loadRequest(request);
+  const volume = commands.findIndex((command) => command[1] === "volume");
+  const load = commands.findIndex((command) => command[0] === "loadfile");
+  assert.ok(volume >= 0 && volume < load);
+  assert.deepEqual(commands[volume], ["set_property", "volume", 0]);
+  for (const value of [-1, 101, "0", NaN, Infinity]) {
+    assert.throws(
+      () =>
+        normalizeLoadRequest({ ...request, volume: value }, "https://media.example"),
+      /volume/,
+    );
+  }
 });
 
 test("forwards observed MPV fullscreen state", () => {

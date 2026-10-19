@@ -43,6 +43,8 @@
     "smoke:server-failure": "electron . --smoke-server-failure --server-url=https://noktus-invalid.invalid",
     "presmoke:recovery": "npm run build",
     "smoke:recovery": "node scripts/runtime-recovery-smoke.mjs",
+    "presmoke:desktop": "npm run build",
+    "smoke:desktop": "node scripts/runtime-recovery-smoke.mjs --desktop",
     "presmoke:diagnostics": "npm run build",
     "smoke:diagnostics": "electron . --smoke-diagnostics",
     "prepackage:dir": "npm run assets:icons && npm run build",

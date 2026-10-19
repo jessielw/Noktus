@@ -302,3 +302,39 @@ footer {
   display: flex;
   gap: 9px;
 }
+
+#series-track-preferences {
+  border-top: 1px solid #2d3039;
+  padding-top: 16px;
+}
+
+#series-track-preferences summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+#series-track-preferences > p {
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+#series-track-list {
+  display: grid;
+  gap: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.series-track-rule {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.series-track-rule > div {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

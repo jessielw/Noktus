@@ -22,6 +22,9 @@ const cancel = document.getElementById("cancel");
 const save = document.getElementById("save");
 const status = document.getElementById("status");
 const version = document.getElementById("version");
+const seriesTrackList = document.getElementById("series-track-list");
+let seriesTrackRules = [];
+let servers = [];
 
 function updateMpvState() {
   mpvSettings.classList.toggle("inactive", playbackMode.value !== "mpv");
@@ -44,6 +47,81 @@ function setBusy(value) {
   browseMpv.disabled = value;
   testMpv.disabled = value;
   discoverMpvProfiles.disabled = value;
+  for (const button of seriesTrackList.querySelectorAll("button")) {
+    button.disabled = value;
+  }
+}
+
+function trackLabel(track) {
+  if (track === "off") return "Off";
+  if (!track) return "Jellyfin default";
+  const flags = [
+    track.forced && "forced",
+    track.hearingImpaired && "SDH",
+    track.commentary && "commentary",
+    track.descriptive && "audio description",
+    track.signs && "signs / songs",
+  ].filter(Boolean);
+  return (
+    [track.language, track.normalizedTitle, ...flags].filter(Boolean).join(" · ") ||
+    "Default track"
+  );
+}
+
+function renderSeriesTracks() {
+  seriesTrackList.replaceChildren();
+  if (seriesTrackRules.length === 0) {
+    const empty = document.createElement("p");
+    empty.textContent = "No remembered series tracks.";
+    seriesTrackList.append(empty);
+    return;
+  }
+  for (const rule of [...seriesTrackRules].sort((a, b) =>
+    a.seriesName.localeCompare(b.seriesName),
+  )) {
+    const row = document.createElement("article");
+    row.className = "series-track-rule";
+    const description = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = rule.seriesName;
+    const server = servers.find((candidate) => candidate.id === rule.serverId);
+    const account = document.createElement("small");
+    account.textContent = `${server?.displayName || server?.name || "Removed server"} · Account ${rule.userId}`;
+    const tracks = document.createElement("small");
+    tracks.textContent = `Audio: ${trackLabel(rule.audio)}. Subtitles: ${trackLabel(rule.subtitle)}.`;
+    description.append(name, account, tracks);
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "secondary";
+    reset.textContent = "Reset";
+    reset.setAttribute("aria-label", `Reset tracks for ${rule.seriesName}`);
+    reset.addEventListener("click", async () => {
+      setBusy(true);
+      setStatus("Resetting series tracks...", "pending");
+      try {
+        seriesTrackRules = await window.settingsApi.forgetSeriesTracks({
+          serverId: rule.serverId,
+          userId: rule.userId,
+          seriesId: rule.seriesId,
+        });
+        renderSeriesTracks();
+        setStatus(
+          `Reset tracks for ${rule.seriesName}. Applies to the next episode started.`,
+          "success",
+        );
+      } catch (error) {
+        setStatus(`Could not reset series tracks: ${errorMessage(error)}`);
+      } finally {
+        setBusy(false);
+        (
+          seriesTrackList.querySelector("button") ||
+          document.querySelector("#series-track-preferences summary")
+        ).focus();
+      }
+    });
+    row.append(description, reset);
+    seriesTrackList.append(row);
+  }
 }
 
 function setStatus(message, kind = "error") {
@@ -123,6 +201,9 @@ function renderTrickplay(trickplay) {
 async function initialize() {
   try {
     const settings = await window.settingsApi.load();
+    seriesTrackRules = settings.seriesTrackRules;
+    servers = settings.servers;
+    renderSeriesTracks();
     discordRichPresence.checked = settings.discordRichPresenceEnabled;
     renderDiscordPresence(settings.discordPresenceConnection);
     playbackMode.value = settings.playbackMode;

@@ -344,6 +344,9 @@ export function normalizeLoadRequest(
     startSeconds: numberInRange(value.startSeconds ?? 0, "startSeconds", 0, 315360000),
     title: title.slice(0, 512),
     fullscreen,
+    ...(value.volume == null
+      ? {}
+      : { volume: numberInRange(value.volume, "volume", 0, 100) }),
     audioTrack: trackNumber(value.audioTrack ?? 0, "audioTrack"),
     externalAudioUrl: optionalUrl("externalAudioUrl"),
     subtitleStreamIndex: streamIndex(
@@ -899,6 +902,9 @@ export class MpvController {
     await this.ensureStarted();
     await this.trickplay.clear();
     await this.command(["set_property", "fullscreen", request.fullscreen]);
+    if (request.volume !== undefined) {
+      await this.command(["set_property", "volume", request.volume]);
+    }
     await this.command(["set_property", "pause", false]);
     await this.command(["set_property", "force-media-title", request.title]);
     this.pendingLoad = request;

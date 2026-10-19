@@ -74,6 +74,8 @@ import {
   type RendererFailureKind,
 } from "./runtime-recovery";
 import { PRODUCT_IDENTITY } from "../shared/product";
+import { installHistoryNavigation, navigateHistory } from "./navigation";
+import { runDesktopSmoke } from "./desktop-smoke";
 import { normalizeMpvProfile } from "../shared/mpv-profile";
 import {
   findSeriesTrackRule,
@@ -134,6 +136,7 @@ const smokeSettings = process.argv.includes("--smoke-settings");
 const smokeServers = process.argv.includes("--smoke-servers");
 const smokeServerFailure = process.argv.includes("--smoke-server-failure");
 const smokeRuntimeRecovery = process.argv.includes("--smoke-runtime-recovery");
+const smokeDesktop = process.argv.includes("--smoke-desktop");
 const smokeDiagnostics = process.argv.includes("--smoke-diagnostics");
 const smokePackaged = process.argv.includes("--smoke-packaged");
 const smokeUserDataArgument = process.argv.find((argument) =>
@@ -780,6 +783,8 @@ function assertServersSender(event: SenderEvent): void {
 
 async function settingsSnapshot(): Promise<SettingsSnapshot> {
   return {
+    seriesTrackRules: persistedSettings.seriesTrackRules,
+    servers: persistedSettings.servers,
     discordRichPresenceEnabled: persistedSettings.discordRichPresenceEnabled,
     discordPresenceConnection: presence.status().connection,
     playbackMode: currentMode,
@@ -1965,6 +1970,21 @@ async function applySettings(rawSettings: unknown): Promise<SettingsSnapshot> {
 }
 
 function registerIpc(): void {
+  ipcMain.handle(
+    "jdc:settings:forget-series-tracks",
+    (event: IpcMainInvokeEvent, key: unknown) => {
+      assertSettingsSender(event);
+      savePersistedSettings({
+        ...persistedSettings,
+        seriesTrackRules: removeSeriesTrackRule(
+          persistedSettings.seriesTrackRules,
+          key,
+        ),
+      });
+      installMenu();
+      return persistedSettings.seriesTrackRules;
+    },
+  );
   ipcMain.handle("jdc:servers:load", (event: IpcMainInvokeEvent) => {
     assertServersSender(event);
     return serversSnapshot();
@@ -2383,6 +2403,9 @@ async function showKeyboardShortcutsDialog(): Promise<void> {
       `Use MPV player — ${primary}+Shift+M`,
       `Zoom in / out — ${primary}+Plus / ${primary}+Minus`,
       `Actual size — ${primary}+0`,
+      process.platform === "darwin"
+        ? "Back / forward — Command+[ / Command+]"
+        : "Back / forward — Alt+Left / Alt+Right; mouse navigation buttons",
       "",
       "While playing in MPV",
       "Skip the active segment — Enter",
@@ -2647,6 +2670,25 @@ function installMenu(): void {
     {
       label: "View",
       submenu: [
+        {
+          id: "noktus-back",
+          label: "Back",
+          accelerator: process.platform === "darwin" ? "Command+[" : "Alt+Left",
+          enabled: Boolean(mainWindow?.webContents.navigationHistory.canGoBack()),
+          click: () => {
+            if (mainWindow) navigateHistory(mainWindow.webContents, "back");
+          },
+        },
+        {
+          id: "noktus-forward",
+          label: "Forward",
+          accelerator: process.platform === "darwin" ? "Command+]" : "Alt+Right",
+          enabled: Boolean(mainWindow?.webContents.navigationHistory.canGoForward()),
+          click: () => {
+            if (mainWindow) navigateHistory(mainWindow.webContents, "forward");
+          },
+        },
+        { type: "separator" },
         { role: "reload" },
         { role: "forceReload" },
         { role: "toggleDevTools" },
@@ -2694,6 +2736,25 @@ function installMenu(): void {
     {
       label: "Help",
       submenu: [
+        {
+          id: "noktus-releases",
+          label: "View releases",
+          click: () =>
+            runMenuAction("View releases", () =>
+              shell.openExternal("https://github.com/jessielw/Noktus/releases"),
+            ),
+        },
+        {
+          id: "noktus-report-issue",
+          label: "Report an issue",
+          click: () =>
+            runMenuAction("Report an issue", () =>
+              shell.openExternal(
+                "https://github.com/jessielw/Noktus/issues/new/choose",
+              ),
+            ),
+        },
+        { type: "separator" },
         {
           label: "Keyboard shortcuts...",
           click: () => runMenuAction("Keyboard shortcuts", showKeyboardShortcutsDialog),
@@ -2774,6 +2835,18 @@ function createWindow({
     );
   });
 
+  installHistoryNavigation(window);
+  const refreshHistoryMenu = () => {
+    if (mainWindow !== window || window.isDestroyed()) return;
+    const menu = Menu.getApplicationMenu();
+    const back = menu?.getMenuItemById("noktus-back");
+    const forward = menu?.getMenuItemById("noktus-forward");
+    if (back) back.enabled = window.webContents.navigationHistory.canGoBack();
+    if (forward) forward.enabled = window.webContents.navigationHistory.canGoForward();
+  };
+  window.webContents.on("did-navigate", refreshHistoryMenu);
+  window.webContents.on("did-navigate-in-page", refreshHistoryMenu);
+  window.webContents.on("did-finish-load", refreshHistoryMenu);
   installMainWindowRecoveryHandlers(window);
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
@@ -2979,7 +3052,17 @@ app.whenReady().then(async () => {
 
   const initial = openMainWindow();
   if (!initial) throw new Error("Could not create the main window");
-  if (smokeRuntimeRecovery) {
+  if (smokeDesktop) {
+    if (!smokeUserDataArgument)
+      throw new Error("Desktop smoke requires isolated user data");
+    void runDesktopSmoke(initial.window, initial.ready, showSettingsWindow).then(
+      () => app.exit(0),
+      (error: unknown) => {
+        console.error(`${LOG_PREFIX} Desktop smoke failed:`, error);
+        app.exit(1);
+      },
+    );
+  } else if (smokeRuntimeRecovery) {
     runRuntimeRecoverySmoke(initial);
   } else if (smokeSwitch) {
     const initialWindow = initial.window;

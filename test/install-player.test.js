@@ -4,6 +4,87 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const installPlayer = require("../src/preload/install-player");
 
+test("restores silent MPV volume and remembers native adjustments after loading", async (t) => {
+  const listeners = new Map();
+  const settings = new Map([["volume", "0"]]);
+  const loads = [];
+  const bridge = {
+    status: async () => ({ backend: "mpv", startFullscreen: false }),
+    on: (name, callback) => listeners.set(name, callback),
+    load: async (request) => loads.push({ ...request }),
+    openExternal: async () => true,
+  };
+  global.location = new URL("https://media.example/web/");
+  global.window = { jellyfinDesktop: bridge };
+  global.document = { getElementById: () => null };
+  t.after(() => {
+    delete global.document;
+    delete global.location;
+    delete global.window;
+  });
+  installPlayer({
+    serverUrl: "https://media.example",
+    backend: "mpv",
+    appName: "Noktus",
+    appVersion: "test",
+    deviceName: "test",
+  });
+  const Player = await window.jellyfinDcMpvPlayer();
+  const args = {
+    events: { trigger() {} },
+    appSettings: {
+      get: (key) => settings.get(key),
+      set: (key, value) => settings.set(key, value),
+    },
+    playbackManager: {},
+  };
+  const player = new Player(args);
+  assert.equal(player.getVolume(), 0);
+  await player.play({
+    url: "https://media.example/Videos/movie/stream",
+    item: { MediaType: "Video", Type: "Movie" },
+    mediaSource: { MediaStreams: [] },
+  });
+  assert.equal(loads[0].volume, 0);
+  listeners.get("volume")({ value: 100 });
+  assert.equal(
+    settings.get("volume"),
+    "0",
+    "startup observations must not replace the saved volume",
+  );
+  listeners.get("loaded")();
+  listeners.get("volume")({ value: 35 });
+  assert.equal(settings.get("volume"), 0.35);
+  listeners.get("volume")({ value: null });
+  listeners.get("volume")({ value: NaN });
+  assert.equal(player.getVolume(), 35);
+  await player._retryMpv();
+  assert.equal(loads[1].volume, 35, "retry must restore the latest native volume");
+  listeners.get("volume")({ value: 100 });
+  assert.equal(settings.get("volume"), 0.35);
+  listeners.get("loaded")();
+  listeners.get("volume")({ value: 35 });
+  listeners.get("ended")();
+  listeners.get("volume")({ value: 75 });
+  assert.equal(
+    settings.get("volume"),
+    0.35,
+    "idle events must not overwrite the saved volume",
+  );
+  assert.equal(new Player(args).getVolume(), 35);
+  for (const [saved, expected] of [
+    [0, 0],
+    [undefined, 100],
+    ["", 100],
+    [NaN, 100],
+    [-1, 0],
+    [2, 100],
+  ]) {
+    settings.set("volume", saved);
+    assert.equal(new Player(args).getVolume(), expected);
+  }
+});
+
 test("installs Web presence listeners without interrupting the native player bridge", (t) => {
   const eventNames = [];
   const bridge = {
@@ -225,11 +306,18 @@ test("passes authenticated Jellyfin MediaSegments to native playback", async (t)
         assert.match(url, /MediaSegments\/movie-id/);
         assert.match(url, /includeSegmentTypes=Intro/);
         assert.match(url, /includeSegmentTypes=Outro/);
+        assert.match(url, /includeSegmentTypes=Recap/);
+        assert.match(url, /includeSegmentTypes=Preview/);
         return {
           Items: [
             { Type: "Intro", StartTicks: 10000000, EndTicks: 30000000 },
             { Type: "Outro", StartTicks: 90000000, EndTicks: 120000000 },
             { Type: "Commercial", StartTicks: 40000000, EndTicks: 50000000 },
+            { Type: "Recap", StartTicks: 0, EndTicks: 10000000 },
+            { Type: "Preview", StartTicks: 80000000, EndTicks: 90000000 },
+            { Type: "Recap", StartTicks: 50000000, EndTicks: 40000000 },
+            { Type: "Preview", StartTicks: -1, EndTicks: 10000000 },
+            { Type: "Unknown", StartTicks: 40000000, EndTicks: 50000000 },
           ],
         };
       },
@@ -271,7 +359,9 @@ test("passes authenticated Jellyfin MediaSegments to native playback", async (t)
 
   assert.deepEqual(nativeCalls, [
     [
+      { type: "Recap", startSeconds: 0, endSeconds: 1 },
       { type: "Intro", startSeconds: 1, endSeconds: 3 },
+      { type: "Preview", startSeconds: 8, endSeconds: 9 },
       { type: "Outro", startSeconds: 9, endSeconds: 12 },
     ],
   ]);

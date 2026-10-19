@@ -33,6 +33,14 @@ jobs:
         env:
           NOKTUS_TEST_NO_SANDBOX: "1"
         run: xvfb-run --auto-servernum npm run smoke:recovery
+      - name: Desktop integration smoke
+        if: runner.os != 'Linux'
+        run: npm run smoke:desktop
+      - name: Desktop integration smoke
+        if: runner.os == 'Linux'
+        env:
+          NOKTUS_TEST_NO_SANDBOX: "1"
+        run: xvfb-run --auto-servernum npm run smoke:desktop
       - name: Package and smoke test
         if: runner.os != 'Linux'
         run: npm run smoke:packaged

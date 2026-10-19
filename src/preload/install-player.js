@@ -581,6 +581,8 @@ function installPlayer(config) {
     }
   }
 
+  const segmentTypes = ["Intro", "Outro", "Recap", "Preview"];
+
   function normalizeMediaSegments(payload) {
     const items = Array.isArray(payload?.Items) ? payload.Items : [];
     return items
@@ -589,7 +591,7 @@ function installPlayer(config) {
         const startTicks = Number(segment?.StartTicks ?? segment?.StartPositionTicks);
         const endTicks = Number(segment?.EndTicks ?? segment?.EndPositionTicks);
         if (
-          !["Intro", "Outro"].includes(type) ||
+          !segmentTypes.includes(type) ||
           !Number.isFinite(startTicks) ||
           !Number.isFinite(endTicks) ||
           startTicks < 0 ||
@@ -621,7 +623,7 @@ function installPlayer(config) {
         ? apiClient.getUrl(path)
         : new URL(`${basePath}/${path}`, server).href;
     const url = new URL(rawUrl, location.href);
-    ["Intro", "Outro"].forEach((type) =>
+    segmentTypes.forEach((type) =>
       url.searchParams.append("includeSegmentTypes", type),
     );
 
@@ -1142,7 +1144,16 @@ function installPlayer(config) {
       this._muted = false;
       this._rate = 1;
       this._fullscreen = false;
-      this._volume = Math.round((this.appSettings.get("volume") || 1) * 100);
+      const rawVolume = this.appSettings.get("volume");
+      const savedVolume =
+        typeof rawVolume === "string" && rawVolume.trim()
+          ? Number(rawVolume)
+          : rawVolume;
+      this._volume =
+        typeof savedVolume === "number" && Number.isFinite(savedVolume)
+          ? Math.round(Math.max(0, Math.min(1, savedVolume)) * 100)
+          : 100;
+      this._volumePersistenceReady = false;
       this._failurePending = false;
       this._loadRequest = null;
       this._shutdownRequestId = null;
@@ -1167,6 +1178,7 @@ function installPlayer(config) {
     _wireBridge() {
       bridge.on("loaded", () => {
         if (!this._currentSrc) return;
+        this._volumePersistenceReady = true;
         this._seriesTrackPersistenceReady = true;
         this._paused = false;
         this.events.trigger(this, "playing");
@@ -1188,7 +1200,12 @@ function installPlayer(config) {
         this._duration = Number(payload?.value) * 1000;
       });
       bridge.on("volume", (payload) => {
-        this._volume = Number(payload?.value);
+        const volume = payload?.value;
+        if (typeof volume !== "number" || !Number.isFinite(volume)) return;
+        this._volume = Math.max(0, volume);
+        if (this._currentSrc && this._volumePersistenceReady) {
+          this.appSettings.set("volume", Math.min(100, this._volume) / 100);
+        }
         this.events.trigger(this, "volumechange");
       });
       bridge.on("muted", (payload) => {
@@ -1246,6 +1263,7 @@ function installPlayer(config) {
 
     async play(options) {
       activeMpvPlayer = this;
+      this._volumePersistenceReady = false;
       this._options = options;
       this._currentSrc = options.url;
       this._currentTime = Number(options.playerStartPositionTicks || 0) / 10000;
@@ -1279,6 +1297,7 @@ function installPlayer(config) {
           startSeconds: this._currentTime / 1000,
           title: playbackTitle(options),
           fullscreen: this._fullscreen,
+          volume: Math.min(100, this._volume),
           ...selectedTracks({
             ...options,
             selectedAudioStreamIndex: this.audioStreamIndex,
@@ -1329,6 +1348,7 @@ function installPlayer(config) {
 
     _finish() {
       if (!this._currentSrc) return;
+      this._volumePersistenceReady = false;
       document.getElementById("jellyfin-dc-electron-recovery")?.remove();
       const src = this._currentSrc;
       this._currentSrc = null;
@@ -1572,6 +1592,7 @@ function installPlayer(config) {
 
     _fail(code, message) {
       if (!this._options) return;
+      this._volumePersistenceReady = false;
       const item = this._options.item;
       const reason = String(message || code || "Unknown MPV error");
       console.warn(`[Noktus] MPV failed (${code}):`, reason);
@@ -1592,7 +1613,9 @@ function installPlayer(config) {
       if (!this._loadRequest || !this._options)
         throw new Error("Playback is no longer active");
       this._failurePending = false;
+      this._volumePersistenceReady = false;
       this._loadRequest.startSeconds = this._currentTime / 1000;
+      this._loadRequest.volume = Math.min(100, this._volume);
       await invoke("load", this._loadRequest);
       if (this._trickplaySupported) {
         this._initializeTrickplay(

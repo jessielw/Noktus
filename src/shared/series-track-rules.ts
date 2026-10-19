@@ -321,8 +321,19 @@ export function saveSeriesTrackRule(
 
 export function removeSeriesTrackRule(
   rules: SeriesTrackRule[],
-  context: Pick<SeriesTrackContext, "serverId" | "userId" | "seriesId">,
+  context: unknown,
 ): SeriesTrackRule[] {
-  const key = ruleKey(context);
+  if (
+    !isRecord(context) ||
+    ![context.serverId, context.userId, context.seriesId].every(
+      (value) =>
+        typeof value === "string" && value.trim().length > 0 && value.length <= 128,
+    )
+  ) {
+    throw new Error("A saved server, user, and series are required");
+  }
+  const key = ruleKey(
+    context as Pick<SeriesTrackContext, "serverId" | "userId" | "seriesId">,
+  );
   return rules.filter((rule) => ruleKey(rule) !== key);
 }

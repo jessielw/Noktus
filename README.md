@@ -52,13 +52,14 @@ either executable can be selected manually in Settings.
 When MPV is used, Noktus adds desktop-focused features while remaining fully integrated
 with Jellyfin.
 
-- Native Skip Intro and Skip Outro prompts.
+- Native Skip Intro, Skip Outro, recap, and preview prompts.
 - Playback reporting.
 - Resume position synchronization.
 - Automatic MPV detection.
 - Optional mpv.net support on Windows.
 - Named MPV video profiles from your existing MPV configuration.
 - Per-series audio and subtitle preferences.
+- Saved playback volume, including changes made inside MPV.
 - Server-generated trickplay thumbnails while scrubbing the Noktus MPV seek bar.
 
 Skip Intro and Skip Outro prompts are powered by Jellyfin's authenticated MediaSegments
@@ -80,6 +81,16 @@ and track type on later episodes instead of assuming every file uses the same st
 number. Use **Playback → Forget automatically saved tracks for this series** to return
 to Jellyfin's normal selection. These preferences stay local to Noktus and do not change
 the series on your Jellyfin server.
+
+You can also open **Settings → Remembered series tracks** to inspect and reset saved
+preferences without starting an episode. Resets take effect immediately and apply the
+next time an episode starts.
+
+Use **View → Back / Forward** to navigate your browsing history. Shortcuts are
+**Alt+Left / Alt+Right**, or **Command+[ / Command+]** on macOS. Mouse navigation
+buttons are supported on Windows and Linux. The **Help** menu links to Noktus releases
+and the issue tracker; **Diagnostics → Copy diagnostics** prepares a report for
+troubleshooting.
 
 ## Playback
 
